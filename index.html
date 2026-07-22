@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pinpoint — unlimited location practice</title>
+<meta name="description" content="Read the clue, drop a pin, see how far off you were. Unlimited rounds of history, landmarks and geography. No sports, no daily limit.">
+<meta name="theme-color" content="#071A26">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%235FD4FF' stroke-width='2'/><circle cx='16' cy='16' r='3.5' fill='%23FFA62B'/></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400..700;1,400..700&family=Azeret+Mono:wght@300;400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="masthead">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <h1>Pinpoint</h1>
+    <span class="tagline">unlimited location practice</span>
+  </div>
+
+  <div class="gauges" id="gauges">
+    <div class="gauge"><span class="gauge-k">Round</span><span class="gauge-v" id="g-round">—</span></div>
+    <div class="gauge"><span class="gauge-k">Mean score</span><span class="gauge-v" id="g-mean">—</span></div>
+    <div class="gauge"><span class="gauge-k">Median miss</span><span class="gauge-v" id="g-miss">—</span></div>
+    <div class="gauge"><span class="gauge-k">Best</span><span class="gauge-v" id="g-best">—</span></div>
+  </div>
+
+  <div class="controls">
+    <button type="button" class="unit" id="unit-toggle" aria-label="Switch distance units">km</button>
+    <button type="button" class="ghost" id="open-settings" aria-expanded="false" aria-controls="settings">Topics</button>
+  </div>
+</header>
+
+<div class="shell">
+
+  <aside class="log" id="log" aria-label="Field log">
+    <div class="log-head">
+      <span>Field log</span>
+      <button type="button" class="linkish" id="reset-log">Clear</button>
+    </div>
+    <ol class="log-list" id="log-list"></ol>
+    <p class="log-empty" id="log-empty">Your rounds land here — closest misses first to spot, worst ones to learn from.</p>
+  </aside>
+
+  <main class="field">
+    <div id="map" role="application" aria-label="World map. Click to place your guess."></div>
+
+    <div class="crosshair-readout" id="cursor-readout" aria-hidden="true">00.0000 N  000.0000 E</div>
+
+    <section class="prompt" id="prompt">
+      <div class="prompt-meta">
+        <span class="chip" id="q-cat">landmark</span>
+        <span class="prompt-n" id="q-n">Round 1</span>
+      </div>
+      <p class="prompt-q" id="q-text">Loading…</p>
+    </section>
+
+    <section class="dock" id="dock">
+      <div class="dock-idle" id="dock-idle">
+        <p class="hint" id="hint">Click the map to drop your pin.</p>
+        <button type="button" class="primary" id="confirm" disabled>Confirm guess</button>
+      </div>
+
+      <div class="dock-result" id="dock-result" hidden>
+        <div class="ranging">
+          <div class="range-block">
+            <span class="range-k">Miss</span>
+            <span class="range-line">
+              <span class="range-v" id="r-dist">0</span>
+              <span class="range-u" id="r-unit">km</span>
+            </span>
+          </div>
+          <div class="range-block">
+            <span class="range-k">Bearing</span>
+            <span class="range-v small" id="r-bearing">—</span>
+          </div>
+          <div class="range-block score">
+            <span class="range-k">Points</span>
+            <span class="range-v" id="r-score">0</span>
+          </div>
+        </div>
+        <div class="answer">
+          <p class="answer-name" id="r-name"></p>
+          <p class="answer-note" id="r-note"></p>
+        </div>
+        <button type="button" class="primary" id="next">Next question</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="sheet" id="settings" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <h2>Topics</h2>
+      <button type="button" class="linkish" id="close-settings">Done</button>
+    </div>
+    <p class="sheet-note">Questions are drawn from the topics you keep on. Sports isn't one of them and never will be.</p>
+    <div class="topic-grid" id="topic-grid"></div>
+    <div class="sheet-foot">
+      <span class="pool" id="pool-count"></span>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="questions.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
