@@ -16,7 +16,7 @@ Four static files. No build step, no dependencies to install, no backend.
 | `styles.css` | All styling. Design tokens at the top under `:root`. |
 | `app.js` | Game logic in one IIFE — geo maths, round flow, rendering, persistence. |
 | `questions.js` | The 350-question bank as a plain `const QUESTIONS = [...]`. |
-| `borders.json` | Natural Earth 50m land boundary lines, minified. Fetched at runtime. |
+| `mapdata.json` | The entire map — Natural Earth 50m land, lakes, country lines and state/province lines, minified (~645 KB gzipped). Fetched once at runtime. |
 
 Results are also logged to Supabase so history survives a cleared browser — see
 **[CLAUDE-supabase.md](CLAUDE-supabase.md)** for the schema, the no-login access
@@ -41,45 +41,41 @@ arc draws between your pin and the truth.
 
 ## Decisions worth remembering
 
-- **Two basemaps, swapped on reveal.** While guessing you get CARTO
-  `dark_nolabels` — labels would literally spell out the answer. The moment you
-  commit, `dark_all` (labelled) is swapped in so you can learn the surrounding
-  geography. This swap is the single most useful thing in the app; don't
-  "simplify" it away.
-- **Country borders are their own tile layer, not a vector overlay.** This is the
-  important one. `borders.json` (Natural Earth 50m boundary lines, ~20k points,
-  113 KB gzipped) is drawn into canvas tiles by a `L.GridLayer` subclass —
-  `BorderTiles` in `app.js`. CARTO's own borders are far too faint to guess against.
+- **The map is fully self-rendered from vector data — there is no raster basemap.**
+  This is the biggest architectural decision. `VectorMap` in `app.js` is an
+  `L.GridLayer` subclass that draws `mapdata.json` (land + lakes as filled
+  polygons, country + state lines as strokes) into canvas tiles. Three reasons it
+  is not CARTO raster tiles:
+  1. **Only the lines the player wants.** CARTO bakes rivers, roads and county
+     lines into the land at z7+, and they *cannot* be filtered out — measured, the
+     faint clutter sits at the same luminance as the ocean, so no contrast curve
+     separates them. Drawing the map ourselves means those lines don't exist.
+  2. **One layer, not two.** It replaced a raster basemap *plus* a canvas border
+     overlay. Half the tiles to transform per zoom frame, and zero raster HTTP
+     fetches mid-gesture — both were making zoom feel heavy.
+  3. **Borders can't drift.** Land and borders are in the *same* canvas tile, so
+     they are one object and cannot come apart (the whole saga below).
 
-  It started as an `L.geoJSON` overlay and that was wrong. A vector overlay is a
-  separate element with its own transform, re-based independently of the basemap
-  during a zoom animation, so the borders visibly slide off their coastlines while
-  you scroll. Nudging the animation ordering reduced it but never removed it,
-  because the two layers are fundamentally different kinds of object. Two
-  GridLayers run identical transform maths on identical tile geometry, so borders
-  are welded to the basemap at every zoom — they even go blurry and re-sharpen in
-  step with it. **Do not "simplify" this back to an overlay.**
+  Colours live in `MAP_COLORS` (land `#0c1a22`, lake/ocean `#22333b`, country and
+  state strokes). **`.leaflet-container` / `#map` background must equal the ocean
+  colour** — the canvas is transparent over water and in the sub-pixel gaps
+  fractional zoom leaves, so the container shows through as the sea. Change one,
+  change all three.
 
-  It lives in its own `borders` pane at z-index 250 (above tiles at 200, below
-  markers at 400) because `.leaflet-tile-pane` carries the basemap colour filter,
-  which would recolour the lines.
-
-  Projection is done by hand in `_draw` rather than through `map.project` — 20k
-  `L.latLng` allocations per tile is pointless churn. `worldIndex` handles the
-  repeated world copies either side of the antimeridian; without it, borders
-  vanish on wrapped tiles. Tiles render in a `setTimeout` so panning never blocks
-  on drawing.
-
-  Coastlines are *not* in this file — they come from the land/sea contrast in the
-  raster.
-- **Tile filter is not decoration.** `.leaflet-tile-pane { filter: brightness(1.25)
-  contrast(1.08) sepia(.4) hue-rotate(158deg) saturate(1.9) }` lifts land off
-  water and tints the sea from neutral grey toward the chart palette.
-- **`.leaflet-container` background must match the filtered ocean colour**
-  (currently `#252e33`). Fractional zoom leaves hairline sub-pixel gaps between
-  tiles; whatever is behind them shows through as a visible 256 px grid. Matching
-  the colour is what makes the seams disappear — if you retune the filter, sample
-  the new ocean colour and update both `.leaflet-container` and `#map`.
+  Rendering detail: Web Mercator is projected by hand in `_draw` (projecting
+  ~100k points per tile through `map.project` would allocate absurdly); features
+  are culled by bounding box against the tile; `worldIndex` offsets the repeated
+  world copies at the antimeridian, without which land vanishes on wrapped tiles;
+  states draw only from z4 (noise at world zoom); tiles render in a `setTimeout`
+  so panning never blocks on drawing. Measured ~1 ms median / 5.5 ms worst per
+  tile — the land fill is cheap because of the bbox cull.
+- **Labels appear on reveal only, as a transparent labels-only raster.** While
+  guessing there are no place names (they'd be the answer key). On commit,
+  `labelsLayer` (CARTO `dark_only_labels`, text only — no lines, so it doesn't
+  reintroduce clutter) is added in the marker pane so you can learn the
+  surrounding geography, and removed again on the next round. This is the one
+  remaining CARTO dependency, and it's cosmetic — the game is fully playable if it
+  fails to load.
 - **Wheel zoom is hand-rolled; Leaflet's is disabled** (`scrollWheelZoom: false`).
   `wheelZoom()` in `app.js` accumulates an absolute zoom target from raw wheel
   deltas — linear, no debounce — and hands it to Leaflet's **animated** zoom path.
@@ -98,11 +94,11 @@ arc draws between your pin and the truth.
      reaches the target — that is what makes the total travel correct.
 
   3. **`pump()` must be deferred a frame** (`requestAnimationFrame`). This listener
-     is registered before the tile and border layers exist, so it otherwise runs
-     *first* on `zoomend` and starts the next animation before those layers have
-     re-projected for the previous one. The visible symptom is country borders
-     sitting off the coastlines while you scroll — the two layers re-base at
-     different zooms. Deferring puts it last.
+     is registered before the map tile layer exists, so it otherwise runs *first*
+     on `zoomend` and starts the next animation before the layer has re-projected
+     for the previous one. Deferring puts it last. (This mattered more when borders
+     were a separate overlay that could visibly lag the basemap; with one layer the
+     symptom is subtler, but the ordering is still correct.)
 
   `pump()` is also guarded on a recent wheel event, or the `zoomend` from the
   reveal's `fitBounds` would yank the map back to a stale target.
@@ -124,10 +120,12 @@ arc draws between your pin and the truth.
   added only when the line arrives — showing them up front would give away the
   answer before the line got there. `prefers-reduced-motion` draws it complete
   immediately, and a timeout backstops the case where rAF never runs.
-- **The border layer is not a performance problem.** It was the first suspect for
-  slow zoom; benchmarked at ~20k points it costs nothing measurable (p50 8.3 ms
-  per frame during continuous zoom). Don't downgrade to the 110m dataset to "fix"
-  a zoom complaint — measure first.
+- **The vector map is not a performance problem.** Drawing was the first suspect
+  for slow zoom both times; benchmarked, it costs nothing measurable — ~1 ms median
+  per tile to draw, p50 8.3 ms per frame during continuous zoom, zero long tasks
+  under aggressive zooming. The lag was the *approach* (raster + overlay, two
+  layers, raster fetches mid-gesture), not the geometry. Measure before blaming the
+  data; don't reach for the coarser 110m dataset reflexively.
 - **Rhumb bearing, not great-circle.** `bearing()` in `app.js` uses the rhumb
   line so "WSW of it" matches the Mercator map the player is looking at. A
   great-circle heading says things like "NW" for a guess that is visibly

@@ -249,28 +249,21 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #map {
   position: absolute;
   inset: 0;
-  background: #252e33;
+  background: #22333b;
 }
 
-/* Must match the filtered ocean colour below. Fractional zoom leaves hairline
-   sub-pixel gaps between tiles, and whatever sits behind them shows through as
-   a visible grid — matching the colour is what makes the seams disappear. */
-.leaflet-container { background: #252e33; font-family: var(--display); }
+/* The vector map is transparent over ocean and in the sub-pixel gaps fractional
+   zoom leaves between tiles, so the container colour IS the sea. Keep it equal to
+   the layer's ocean/lake fill (MAP_COLORS in app.js). */
+.leaflet-container { background: #22333b; font-family: var(--display); }
 
 /* While the wheel is turning, replace Leaflet's 0.25s eased zoom transition with
    a short linear one. Chained eased animations pulse; short linear ones join into
-   continuous motion. Applies to tiles and the border overlay alike, so they keep
-   step with each other. */
+   continuous motion. */
 .wheeling .leaflet-zoom-anim .leaflet-zoom-animated {
   transition: transform 80ms linear;
 }
 
-/* CARTO's dark basemap is beautiful and almost unreadable at world zoom.
-   Lift the land off the water, and tint the sea toward the chart palette
-   instead of leaving it a neutral grey. */
-.leaflet-tile-pane {
-  filter: brightness(1.25) contrast(1.08) sepia(.4) hue-rotate(158deg) saturate(1.9);
-}
 .leaflet-control-attribution {
   background: rgba(6, 23, 34, .82) !important;
   color: #547484 !important;

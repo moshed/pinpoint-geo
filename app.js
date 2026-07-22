@@ -288,36 +288,33 @@
     }, { passive: false });
   })();
 
-  const ATTRIB = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  const ATTRIB = 'Boundaries &copy; <a href="https://www.naturalearthdata.com/">Natural Earth</a>';
+  map.attributionControl.addAttribution(ATTRIB);
 
-  const blindLayer = L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-    { attribution: ATTRIB, subdomains: 'abcd', maxZoom: 11 }
-  ).addTo(map);
+  /* The whole map is self-rendered from Natural Earth vector data — there is no
+     raster basemap. This is deliberate:
 
-  // Only shown after you commit — labels while guessing would be the answer key.
-  const namedLayer = L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    { attribution: ATTRIB, subdomains: 'abcd', maxZoom: 11 }
-  );
+     - The player asked for only country and state/region lines. CARTO's raster
+       bakes rivers, roads and county lines into the land at high zoom, and they
+       cannot be filtered out (measured: the faint clutter sits at the same
+       luminance as the ocean, so no contrast curve separates them). Drawing the
+       map ourselves means those lines simply don't exist.
+     - It is one tile layer, not a raster basemap plus a border overlay. Half the
+       tiles to transform per zoom frame, and no raster HTTP fetches mid-gesture —
+       both of which were making the zoom feel heavy.
+     - Borders drawn into the same tile grid as the land can never drift from it,
+       which an SVG overlay always eventually did.
 
-  /* Country borders.
+     `land` and `lakes` are filled polygons; `countries` and `states` are stroked
+     lines. States only appear from z4 — at world zoom they are noise. */
+  const MAP_COLORS = {
+    land:      '#0c1a22',
+    lake:      '#22333b',   // == ocean, so lakes read as water
+    country:   'rgba(190, 216, 227, 0.95)',
+    state:     'rgba(130, 170, 188, 0.66)'
+  };
 
-     These are drawn into their own *tile layer*, not as an SVG overlay. A vector
-     overlay is a separate element with its own transform, and during a zoom
-     animation it is re-based independently of the basemap — the borders visibly
-     slide off their coastlines mid-gesture. Two GridLayers, by contrast, run
-     identical transform maths on identical tile geometry, so the borders are
-     welded to the map at every zoom, including mid-animation.
-
-     Its own pane, because `.leaflet-tile-pane` carries the colour filter meant
-     for the basemap. 250 sits above the tiles (200) and below markers (400). */
-  map.createPane('borders');
-  const borderPane = map.getPane('borders');
-  borderPane.style.zIndex = 250;
-  borderPane.style.pointerEvents = 'none';
-
-  const BorderTiles = L.GridLayer.extend({
+  const VectorMap = L.GridLayer.extend({
     createTile: function (coords, done) {
       const size = this.getTileSize();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -335,52 +332,71 @@
     },
 
     _draw: function (canvas, coords, size, dpr) {
-      if (!window.BORDER_LINES) return;
+      const D = window.MAPDATA;
+      if (!D) return;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
-      ctx.strokeStyle = 'rgba(143, 179, 194, 0.9)';
-      ctx.lineWidth = 0.9;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
 
       const z = coords.z;
       const tilesPerWorld = Math.pow(2, z);
       const worldPx = size.x * tilesPerWorld;
-      const worldIndex = Math.floor(coords.x / tilesPerWorld);  // which repeated world
+      const worldIndex = Math.floor(coords.x / tilesPerWorld);  // repeated-world copy
       const originX = coords.x * size.x;
       const originY = coords.y * size.y;
+      const offX = worldIndex * worldPx - originX;
 
-      // Web Mercator by hand — 20k projections per tile through L.latLng objects
-      // is a lot of needless allocation.
+      // Web Mercator by hand — projecting ~100k points per tile through
+      // L.latLng would allocate far too much.
       const RAD = Math.PI / 180;
-      const projX = (lon) => (lon + 180) / 360 * worldPx;
+      const projX = (lon) => (lon + 180) / 360 * worldPx + offX;
       const projY = (lat) => {
         const s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * RAD);
-        return worldPx * (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI));
+        return worldPx * (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) - originY;
       };
 
-      // Tile bounds in degrees. Shift wrapped copies back into [-180, 180] so
-      // they can be compared against the feature bounding boxes.
+      // Tile bounds in degrees, for culling features by their bbox.
       const lonShift = -worldIndex * 360;
       const pad = 360 / tilesPerWorld * 0.05 + 0.5;
       const west  = (originX / worldPx) * 360 - 180 + lonShift - pad;
       const east  = ((originX + size.x) / worldPx) * 360 - 180 + lonShift + pad;
       const north = unprojectLat(originY, worldPx) + pad;
       const south = unprojectLat(originY + size.y, worldPx) - pad;
+      const hit = (b) => !(b[2] < west || b[0] > east || b[3] < south || b[1] > north);
 
-      const lines = window.BORDER_LINES;
-      ctx.beginPath();
-      for (let i = 0; i < lines.length; i++) {
-        const b = lines[i].bbox;
-        if (b[2] < west || b[0] > east || b[3] < south || b[1] > north) continue;
-        const pts = lines[i].pts;
-        for (let k = 0; k < pts.length; k += 2) {
-          const x = projX(pts[k]) + worldIndex * worldPx - originX;
-          const y = projY(pts[k + 1]) - originY;
-          if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      const fill = (rings, color) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        for (let i = 0; i < rings.length; i++) {
+          if (!hit(rings[i].b)) continue;
+          const c = rings[i].c;
+          for (let k = 0; k < c.length; k += 2) {
+            const x = projX(c[k]), y = projY(c[k + 1]);
+            if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
         }
-      }
-      ctx.stroke();
+        ctx.fill('evenodd');
+      };
+
+      const stroke = (lines, color, w) => {
+        ctx.strokeStyle = color; ctx.lineWidth = w;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < lines.length; i++) {
+          if (!hit(lines[i].b)) continue;
+          const c = lines[i].c;
+          for (let k = 0; k < c.length; k += 2) {
+            const x = projX(c[k]), y = projY(c[k + 1]);
+            if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      };
+
+      fill(D.land, MAP_COLORS.land);
+      fill(D.lakes, MAP_COLORS.lake);
+      if (z >= 4) stroke(D.states, MAP_COLORS.state, z >= 6 ? 0.8 : 0.7);
+      stroke(D.countries, MAP_COLORS.country, z >= 5 ? 1.1 : 1.0);
     }
   });
 
@@ -389,31 +405,16 @@
     return Math.atan(Math.sinh(n)) * 180 / Math.PI;
   }
 
-  fetch('borders.json')
+  const vectorLayer = new VectorMap({ maxZoom: 11, updateWhenIdle: false, keepBuffer: 3 });
+
+  fetch('mapdata.json')
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(geo => {
-      // Flatten to plain coordinate arrays with a bounding box each — the tile
-      // renderer walks this on every tile, so keep it allocation-free.
-      const out = [];
-      geo.features.forEach(f => {
-        const g = f.geometry;
-        const parts = g.type === 'LineString' ? [g.coordinates] : g.coordinates;
-        parts.forEach(part => {
-          const pts = new Float64Array(part.length * 2);
-          let minX = 180, minY = 90, maxX = -180, maxY = -90;
-          for (let i = 0; i < part.length; i++) {
-            const lon = part[i][0], lat = part[i][1];
-            pts[i * 2] = lon; pts[i * 2 + 1] = lat;
-            if (lon < minX) minX = lon; if (lon > maxX) maxX = lon;
-            if (lat < minY) minY = lat; if (lat > maxY) maxY = lat;
-          }
-          out.push({ pts: pts, bbox: [minX, minY, maxX, maxY] });
-        });
-      });
-      window.BORDER_LINES = out;
-      new BorderTiles({ pane: 'borders', maxZoom: 11, updateWhenIdle: false }).addTo(map);
-    })
-    .catch(() => { /* borders are an enhancement — the game works without them */ });
+    .then(data => { window.MAPDATA = data; vectorLayer.addTo(map); })
+    .catch(() => {
+      // Last resort so the game is still playable if the vector data fails.
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+        { subdomains: 'abcd', maxZoom: 11 }).addTo(map);
+    });
 
   const pinIcon = (cls) => L.divIcon({
     className: '',
@@ -442,10 +443,19 @@
     el.cursor.textContent = fmtCoord(e.latlng.lat, ((e.latlng.lng + 540) % 360) - 180);
   });
 
+  // Place-name labels are hidden while guessing (they'd be the answer key) and
+  // shown once you commit, so you can learn the surrounding geography. This is a
+  // transparent labels-only raster — no lines, so it doesn't reintroduce the
+  // clutter the vector map exists to avoid.
+  const labelsLayer = L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+    { subdomains: 'abcd', maxZoom: 11, pane: 'markerPane', opacity: 0.85 }
+  );
+
   function clearMarks() {
     [guessMarker, fixMarker, fixLabel, line].forEach(m => { if (m) map.removeLayer(m); });
     guessMarker = fixMarker = fixLabel = line = null;
-    if (map.hasLayer(namedLayer)) { map.removeLayer(namedLayer); map.addLayer(blindLayer); }
+    if (map.hasLayer(labelsLayer)) map.removeLayer(labelsLayer);
   }
 
   /* ── question pool ────────────────────────────────────── */
@@ -508,8 +518,7 @@
     const pts = scoreFor(km);
     const brg = compass(bearing(truth, guess));   // where the player landed, seen from the answer
 
-    map.removeLayer(blindLayer);
-    map.addLayer(namedLayer);
+    if (!map.hasLayer(labelsLayer)) map.addLayer(labelsLayer);
 
     const path = arc(guess, truth, 96);
     const fixLatLng = [truth.lat, path[path.length - 1][1]];
