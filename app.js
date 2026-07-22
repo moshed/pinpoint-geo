@@ -11,6 +11,13 @@
   // costs you 30 points. Harsh up close, forgiving once you're already lost.
   const FALLOFF_MI = 1400;
 
+  // Supabase "Misc" project. This is the publishable key — it is meant to ship in
+  // client code. It grants INSERT on pin_rounds and nothing else: the table has no
+  // SELECT policy, and history is read back through pin_stats(player_id), so your
+  // rounds are only reachable by someone who knows your player uuid.
+  const SB_URL = 'https://atqhfbaurrmivjarowco.supabase.co';
+  const SB_KEY = 'sb_publishable_G44hmJHuAwEcoxq0QPWI7w_BWt_owiB';
+
   const TOPICS = [
     { id: 'history',  name: 'History & events' },
     { id: 'landmark', name: 'Landmarks & monuments' },
@@ -61,6 +68,64 @@
 
   function save() {
     try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* private mode */ }
+  }
+
+  /* ── player identity & remote log ─────────────────────── */
+
+  // A random key per browser, shown in the Progress panel so it can be copied to
+  // another device. No login: knowing the key is what grants access to the history.
+  const KEY_STORE = 'pinpoint.player';
+  let memoryKey = null;
+
+  const isUuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
+
+  function playerKey() {
+    let id;
+    try { id = localStorage.getItem(KEY_STORE); } catch (e) { id = memoryKey; }
+    if (!isUuid(id)) {
+      id = (crypto && crypto.randomUUID) ? crypto.randomUUID()
+         : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+             const r = Math.random() * 16 | 0;
+             return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+           });
+      setPlayerKey(id);
+    }
+    return id;
+  }
+
+  function setPlayerKey(id) {
+    memoryKey = id;
+    try { localStorage.setItem(KEY_STORE, id); } catch (e) { /* private mode */ }
+  }
+
+  function logRound(q, g, km, pts) {
+    const body = {
+      player_id: playerKey(),
+      question_id: q.id, question: q.q, answer: q.a, category: q.cat,
+      guess_lat: +g.lat.toFixed(5), guess_lon: +g.lon.toFixed(5),
+      answer_lat: q.lat, answer_lon: q.lon,
+      miss_km: +km.toFixed(3), score: pts
+    };
+    fetch(SB_URL + '/rest/v1/pin_rounds', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify(body),
+      keepalive: true
+    }).catch(() => { /* offline: the round still counts locally */ });
+  }
+
+  function fetchStats() {
+    return fetch(SB_URL + '/rest/v1/rpc/pin_stats', {
+      method: 'POST',
+      headers: {
+        'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ p_player: playerKey() })
+    }).then(r => r.ok ? r.json() : Promise.reject(r.status));
   }
 
   /* ── geo maths ────────────────────────────────────────── */
@@ -316,6 +381,7 @@
     state.played.push(current.id);
     state.rounds.push({ n: state.rounds.length + 1, km: km, score: pts, name: current.a });
     save();
+    logRound(current, guess, km, pts);
     renderLog();
     renderGauges();
   }
@@ -401,6 +467,124 @@
     el.poolCount.textContent = pool().length + ' questions in play';
   }
 
+  /* ── progress panel ───────────────────────────────────── */
+
+  const P = {
+    sheet: $('progress'), body: $('prog-body'), note: $('prog-note'),
+    total: $('p-total'), mean: $('p-mean'), median: $('p-median'), best: $('p-best'),
+    daily: $('p-daily'), readout: $('p-readout'), cats: $('p-cats'), tough: $('p-tough'),
+    key: $('p-key'), keyForm: $('key-form'), keyInput: $('key-input')
+  };
+
+  const CAT_NAME = TOPICS.reduce((m, t) => (m[t.id] = t.name, m), {});
+
+  function loadProgress() {
+    P.body.hidden = true;
+    P.note.textContent = 'Loading your history…';
+    P.key.textContent = playerKey();
+    fetchStats().then(stats => {
+      if (!stats || !stats.total) {
+        P.note.textContent = 'No rounds recorded yet under this key. Play a round and it will show up here.';
+        return;
+      }
+      P.note.textContent = 'Recorded since ' + new Date(stats.first_played)
+        .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) + '.';
+      renderProgress(stats);
+      P.body.hidden = false;
+    }).catch(() => {
+      P.note.textContent = 'Could not reach the results server. Your rounds are still saved locally.';
+    });
+  }
+
+  function renderProgress(s) {
+    P.total.textContent = s.total.toLocaleString('en-US');
+    P.mean.textContent = s.mean_score;
+    P.median.textContent = fmtDist(s.median_miss_km) + ' ' + unitLabel();
+    P.best.textContent = fmtDist(s.best_miss_km) + ' ' + unitLabel();
+
+    drawDaily(s.daily || []);
+
+    const cats = (s.by_category || []);
+    P.cats.innerHTML = cats.map(c =>
+      '<div class="cat-row">' +
+        '<span class="cat-name">' + escapeHtml(CAT_NAME[c.category] || c.category) + '</span>' +
+        '<span class="cat-bar"><span class="cat-fill" style="width:' + Math.max(1.5, c.mean_score) + '%"></span></span>' +
+        '<span class="cat-val">' + c.mean_score + '</span>' +
+        '<span class="cat-n">' + c.rounds + '</span>' +
+      '</div>'
+    ).join('') || '<p class="empty-note">Nothing yet.</p>';
+
+    P.tough.innerHTML = (s.toughest || []).map(t =>
+      '<li><span class="tough-name">' + escapeHtml(t.answer) + '</span>' +
+      '<span class="tough-score">' + t.mean_score + '</span>' +
+      '<span class="tough-seen">×' + t.seen + '</span></li>'
+    ).join('') || '<li class="empty-note">Nothing yet.</li>';
+  }
+
+  // Single series, magnitude over time: length carries the value, so the bars stay
+  // one colour. Only the first and last day get an axis label — a date under every
+  // bar is noise.
+  function drawDaily(days) {
+    // Match the viewBox to the rendered width so the SVG never scales, and the
+    // axis type stays at its true size on a phone.
+    const svg = P.daily;
+    const W = Math.max(300, Math.min(640, Math.round(svg.parentNode.clientWidth) || 640));
+    const H = 150, padL = 26, padR = 6, padT = 10, padB = 20;
+    const data = days.slice(-45);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    if (!data.length) { svg.innerHTML = ''; return; }
+
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const y = v => padT + plotH * (1 - v / 100);
+    const slot = plotW / data.length;
+    const bw = Math.max(2, Math.min(22, slot - 2));   // 2px surface gap between bars
+
+    let out = '';
+    [0, 50, 100].forEach(v => {
+      out += '<line class="grid" x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(v) + '" y2="' + y(v) + '"/>' +
+             '<text class="ax" x="' + (padL - 6) + '" y="' + (y(v) + 3.5) + '" text-anchor="end">' + v + '</text>';
+    });
+
+    data.forEach((d, i) => {
+      const x = padL + slot * i + (slot - bw) / 2;
+      const top = y(d.mean_score), h = Math.max(1.5, y(0) - top), r = Math.min(3, bw / 2);
+      out += '<path class="bar" d="' + roundedTop(x, top, bw, h, r) + '"' +
+             ' data-day="' + d.day + '" data-score="' + d.mean_score + '" data-rounds="' + d.rounds + '"/>';
+    });
+
+    const fmtDay = iso => {
+      const [Y, M, D] = iso.split('-').map(Number);
+      return new Date(Y, M - 1, D).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+    out += '<text class="ax" x="' + padL + '" y="' + (H - 6) + '">' + fmtDay(data[0].day) + '</text>';
+    if (data.length > 1) {
+      out += '<text class="ax" x="' + (W - padR) + '" y="' + (H - 6) + '" text-anchor="end">' +
+             fmtDay(data[data.length - 1].day) + '</text>';
+    }
+    svg.innerHTML = out;
+  }
+
+  // Bar with rounded top corners, square on the baseline.
+  function roundedTop(x, y, w, h, r) {
+    r = Math.min(r, h);
+    return 'M' + x + ',' + (y + h) + 'V' + (y + r) +
+           'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + -r +
+           'h' + (w - 2 * r) +
+           'a' + r + ',' + r + ' 0 0 1 ' + r + ',' + r +
+           'V' + (y + h) + 'Z';
+  }
+
+  P.daily.addEventListener('mouseover', (e) => {
+    const b = e.target.closest('.bar');
+    if (!b) return;
+    const [Y, M, D] = b.dataset.day.split('-').map(Number);
+    P.readout.textContent =
+      new Date(Y, M - 1, D).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+      ' · ' + b.dataset.score + ' avg · ' + b.dataset.rounds +
+      (b.dataset.rounds === '1' ? ' round' : ' rounds');
+  });
+  P.daily.addEventListener('mouseleave', () => { P.readout.innerHTML = '&nbsp;'; });
+
   /* ── wiring ───────────────────────────────────────────── */
 
   el.confirm.addEventListener('click', commit);
@@ -444,6 +628,44 @@
     if (phase === 'guessing' && current && !state.topics.includes(current.cat)) newRound();
   });
 
+  $('open-progress').addEventListener('click', () => {
+    P.sheet.hidden = false;
+    $('open-progress').setAttribute('aria-expanded', 'true');
+    $('close-progress').focus();
+    loadProgress();
+  });
+
+  const closeProgress = () => {
+    P.sheet.hidden = true;
+    P.keyForm.hidden = true;
+    $('open-progress').setAttribute('aria-expanded', 'false');
+    $('open-progress').focus();
+  };
+  $('close-progress').addEventListener('click', closeProgress);
+  P.sheet.addEventListener('click', (e) => { if (e.target === P.sheet) closeProgress(); });
+
+  $('copy-key').addEventListener('click', () => {
+    const btn = $('copy-key');
+    navigator.clipboard.writeText(playerKey())
+      .then(() => { btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1400); })
+      .catch(() => { btn.textContent = 'Press ⌘C'; });
+  });
+
+  $('swap-key').addEventListener('click', () => {
+    P.keyForm.hidden = !P.keyForm.hidden;
+    if (!P.keyForm.hidden) { P.keyInput.value = ''; P.keyInput.focus(); }
+  });
+
+  P.keyForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = P.keyInput.value.trim();
+    if (!isUuid(v)) { P.keyInput.setAttribute('aria-invalid', 'true'); return; }
+    P.keyInput.removeAttribute('aria-invalid');
+    setPlayerKey(v);
+    P.keyForm.hidden = true;
+    loadProgress();
+  });
+
   el.resetLog.addEventListener('click', () => {
     state.rounds = [];
     state.played = [];
@@ -452,7 +674,9 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !el.settings.hidden) { closeSheet(); return; }
-    if (e.target.tagName === 'BUTTON') return;
+    if (e.key === 'Escape' && !P.sheet.hidden) { closeProgress(); return; }
+    if (!P.sheet.hidden) return;
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
     if (e.key === 'Enter') {
       if (phase === 'guessing' && guess) commit();
       else if (phase === 'revealed') newRound();

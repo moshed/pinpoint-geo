@@ -18,6 +18,10 @@ Four static files. No build step, no dependencies to install, no backend.
 | `questions.js` | The 350-question bank as a plain `const QUESTIONS = [...]`. |
 | `borders.json` | Natural Earth 50m land boundary lines, minified. Fetched at runtime. |
 
+Results are also logged to Supabase so history survives a cleared browser — see
+**[CLAUDE-supabase.md](CLAUDE-supabase.md)** for the schema, the no-login access
+model, and why the publishable key is committed on purpose.
+
 Deployed by GitHub Pages straight off `main` at repo root (`moshed/pinpoint-geo`).
 `CNAME` holds the custom domain — GitHub rewrites this file if the domain is
 changed in repo settings, so edit it there, not here.
@@ -83,6 +87,13 @@ arc draws between your pin and the truth.
 - **`--prompt-h`** is written by `syncPromptHeight()` so Leaflet's zoom buttons
   can sit clear of the floating prompt card on narrow screens.
 
+- **Questions must never name the answer's city or country.** Moshe asked for this
+  explicitly — a clue that says "the capital of Bhutan" or "a Paris crowd" gives the
+  answer away. The subject's own proper name is fine even when it doubles as a place
+  ("Where is Chernobyl?", "Where is the Eiffel Tower?"); what's banned is an
+  appositive or qualifier naming where the answer *is*. Run the leak check below
+  after adding or editing any question.
+
 ## Adding questions
 
 Append to the array in `questions.js` before the closing bracket:
@@ -96,15 +107,26 @@ Append to the array in `questions.js` before the closing bracket:
 the five topic toggles, and `TOPICS` in `app.js` holds their display names. To
 add a sixth category, add it in both places.
 
-Sanity-check the bank after editing:
+Sanity-check the bank after editing — duplicate ids **and** place-name leaks. This
+flags any question whose text contains something from its own answer after the first
+comma, i.e. the city/country. The one expected hit is "Where is Panama City?", where
+the city's name contains the country's:
 
 ```bash
 node -e '
 const src = require("fs").readFileSync("questions.js","utf8");
 const Q = new Function(src + "; return QUESTIONS;")();
 const ids = new Set(); Q.forEach(q => { if (ids.has(q.id)) console.log("DUP", q.id); ids.add(q.id); });
+const strip = s => s.normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase();
+Q.forEach(q => q.a.split(",").slice(1).map(s=>s.trim()).forEach(t =>
+  t.split(/[–—\/()]/).map(s=>s.trim()).filter(s=>s.length>3).forEach(w => {
+    if (strip(q.q).includes(strip(w))) console.log("LEAK:", w, "::", q.q, "->", q.a);
+  })));
 console.log(Q.length, "questions");'
 ```
+
+Demonyms slip past that check ("the Swiss capital" never contains "Switzerland"), so
+also eyeball new questions for nationality adjectives that pin down a country.
 
 ## Local development
 
