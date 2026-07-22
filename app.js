@@ -247,8 +247,7 @@
      zoomend until the map has caught up with the target. */
   (function wheelZoom() {
     const el = map.getContainer();
-    const DURATION = 0.12;
-    let target = map.getZoom(), point = null, last = -1e6;
+    let target = map.getZoom(), point = null, last = -1e6, idle = null;
 
     const gestureActive = () => performance.now() - last < 400;
 
@@ -256,9 +255,14 @@
       if (!gestureActive() || !point) return;      // don't hijack fitBounds/setView
       if (map._animatingZoom) return;              // request would be dropped; zoomend retries
       if (Math.abs(target - map.getZoom()) < 0.004) return;
-      map.setZoomAround(point, target, { animate: true, duration: DURATION });
+      map.setZoomAround(point, target, { animate: true });
     };
-    map.on('zoomend', pump);
+
+    // Deferred by a frame on purpose. This listener is registered before the tile
+    // and border layers exist, so it would otherwise run FIRST on zoomend and kick
+    // off the next animation before those layers had re-projected for the previous
+    // one — which is exactly what left the borders sitting off the coastlines.
+    map.on('zoomend', () => requestAnimationFrame(pump));
 
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -269,6 +273,12 @@
       const now = performance.now();
       if (now - last > 250) target = map.getZoom();   // fresh gesture: resync
       last = now;
+
+      // Shortens Leaflet's 0.25s eased zoom transition to a brief linear one, so
+      // the chain of animations reads as continuous motion rather than pulses.
+      el.classList.add('wheeling');
+      clearTimeout(idle);
+      idle = setTimeout(() => el.classList.remove('wheeling'), 300);
 
       // macOS pinch-to-zoom arrives as ctrl+wheel, with much smaller deltas.
       const speed = e.ctrlKey ? 0.03 : 0.007;

@@ -77,8 +77,21 @@ arc draws between your pin and the truth.
      stops at the first step. Hence `pump()` re-firing on `zoomend` until the map
      reaches the target — that is what makes the total travel correct.
 
-  `pump()` is guarded on a recent wheel event, or the `zoomend` from the reveal's
-  `fitBounds` would yank the map back to a stale target.
+  3. **`pump()` must be deferred a frame** (`requestAnimationFrame`). This listener
+     is registered before the tile and border layers exist, so it otherwise runs
+     *first* on `zoomend` and starts the next animation before those layers have
+     re-projected for the previous one. The visible symptom is country borders
+     sitting off the coastlines while you scroll — the two layers re-base at
+     different zooms. Deferring puts it last.
+
+  `pump()` is also guarded on a recent wheel event, or the `zoomend` from the
+  reveal's `fitBounds` would yank the map back to a stale target.
+
+  Leaflet's zoom transition is **0.25s eased and set in CSS, not by the `duration`
+  option** — passing `duration` to a zoom does nothing. Chained 0.25s eased
+  animations update roughly 4×/second and read as pulsing, so `styles.css`
+  shortens it to `80ms linear` while the `wheeling` class is on the container.
+  That takes motion to ~42 distinct transforms per 45 frames.
 
   Tuning is one constant: `speed`, 0.007 per wheel pixel (0.03 for ctrl+wheel,
   which is how macOS pinch-to-zoom arrives). A 300 px two-finger swipe travels

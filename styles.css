@@ -257,6 +257,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
    a visible grid — matching the colour is what makes the seams disappear. */
 .leaflet-container { background: #252e33; font-family: var(--display); }
 
+/* While the wheel is turning, replace Leaflet's 0.25s eased zoom transition with
+   a short linear one. Chained eased animations pulse; short linear ones join into
+   continuous motion. Applies to tiles and the border overlay alike, so they keep
+   step with each other. */
+.wheeling .leaflet-zoom-anim .leaflet-zoom-animated {
+  transition: transform 80ms linear;
+}
+
 /* CARTO's dark basemap is beautiful and almost unreadable at world zoom.
    Lift the land off the water, and tint the sea toward the chart palette
    instead of leaving it a neutral grey. */
