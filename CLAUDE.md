@@ -60,10 +60,22 @@ arc draws between your pin and the truth.
   tiles; whatever is behind them shows through as a visible 256 px grid. Matching
   the colour is what makes the seams disappear — if you retune the filter, sample
   the new ocean colour and update both `.leaflet-container` and `#map`.
-- **Smooth zoom comes from `zoomSnap: 0`.** Leaflet's default snaps the wheel to
-  whole zoom levels, which is what felt stepped. With `zoomDelta: 0.4` and
-  `wheelPxPerZoomLevel: 200` the wheel is continuous. This is also what surfaced
-  the tile-seam problem above — the two are linked.
+- **Wheel zoom is hand-rolled; Leaflet's is disabled** (`scrollWheelZoom: false`).
+  Leaflet accumulates wheel deltas behind a debounce timer and applies them as one
+  animated jump, and it runs them through a log-compression curve tied to
+  `wheelPxPerZoomLevel`. On a Mac trackpad that reads as both slow and steppy.
+  `directWheelZoom()` in `app.js` instead applies every wheel event straight to
+  `setZoomAround(..., {animate:false})`, throttled to one call per animation frame.
+  Measured: a 300 px two-finger swipe moves ~2 zoom levels and updates on **every**
+  frame (31 distinct zoom values over 31 frames), at a p50 frame cost of 8.3 ms.
+  Tuning lives in one constant — `speed`, 0.007 per wheel pixel, and 0.03 for
+  ctrl+wheel, which is how macOS pinch-to-zoom arrives. `zoomSnap: 0` is still
+  required or every step would round to a whole level. Do not "restore"
+  `wheelPxPerZoomLevel` — it does nothing now.
+- **The border layer is not a performance problem.** It was the first suspect for
+  slow zoom; benchmarked at 390 paths / ~20k points it costs nothing measurable
+  (p50 8.3 ms per frame during continuous zoom, with headroom to spare). Don't
+  downgrade to the 110m dataset to "fix" a zoom complaint — measure first.
 - **Rhumb bearing, not great-circle.** `bearing()` in `app.js` uses the rhumb
   line so "WSW of it" matches the Mercator map the player is looking at. A
   great-circle heading says things like "NW" for a guess that is visibly
@@ -148,6 +160,23 @@ Headless Chrome clamps the viewport to a 500 px minimum, so a `--window-size`
 narrower than that produces a *cropped* 500 px render, not a mobile layout. To
 check the ≤700 px breakpoint honestly, load the page in a 390 px-wide iframe
 inside a 500 px window.
+
+**`requestAnimationFrame` does not run under `--virtual-time-budget`**, so any
+timing or interaction test built on rAF silently produces nothing. For those, drive
+a real browser over CDP instead — Node's built-in `WebSocket` is enough, no
+dependencies:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new \
+  --no-sandbox --remote-debugging-port=9222 --user-data-dir=/tmp/cdpprof about:blank &
+# then: PUT (not GET) http://127.0.0.1:9222/json/new?<url> to open a tab,
+# connect to webSocketDebuggerUrl, and Runtime.evaluate with awaitPromise:true
+```
+
+Useful probes: `img.leaflet-tile` rendered width scales continuously with
+fractional zoom (good for proving smooth zoom); the tile `src` path gives the
+integer zoom level (good for measuring sensitivity). The map pane's transform is
+reset after every non-animated `setView`, so it is useless as a zoom probe.
 
 ## Deployment
 

@@ -219,13 +219,43 @@
     attributionControl: true,
     maxBounds: [[-88, -230], [88, 230]],
     maxBoundsViscosity: 0.6,
-    // Continuous zoom. zoomSnap 0 stops the wheel from jumping between whole
-    // zoom levels, which is what makes the default feel stepped on a trackpad.
+    // zoomSnap 0 stops zoom snapping to whole levels. The wheel is handled
+    // manually below — Leaflet's own handler batches deltas behind a debounce
+    // timer, which is what made trackpad zoom feel both slow and steppy.
     zoomSnap: 0,
-    zoomDelta: 0.4,
-    wheelPxPerZoomLevel: 200,
-    wheelDebounceTime: 12
+    zoomDelta: 0.5,
+    scrollWheelZoom: false
   }).setView([25, 10], 2);
+
+  /* Trackpad-grade zoom: apply every wheel event directly, at most once per
+     frame, so zoom tracks the fingers instead of arriving in debounced jumps. */
+  (function directWheelZoom() {
+    const el = map.getContainer();
+    let target = map.getZoom(), point = null, frame = null, last = 0;
+
+    const apply = () => {
+      frame = null;
+      map.setZoomAround(point, target, { animate: false });
+    };
+
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      let dy = e.deltaY;
+      if (e.deltaMode === 1) dy *= 16;        // lines
+      else if (e.deltaMode === 2) dy *= 400;  // pages
+
+      const now = e.timeStamp || performance.now();
+      // A fresh gesture: resync, in case zoom moved via buttons or a reveal.
+      if (now - last > 250) target = map.getZoom();
+      last = now;
+
+      // macOS pinch-to-zoom arrives as ctrl+wheel with much smaller deltas.
+      const speed = e.ctrlKey ? 0.03 : 0.007;
+      target = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), target - dy * speed));
+      point = map.mouseEventToContainerPoint(e);
+      if (!frame) frame = requestAnimationFrame(apply);
+    }, { passive: false });
+  })();
 
   const ATTRIB = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
 
