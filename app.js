@@ -301,15 +301,117 @@
     { attribution: ATTRIB, subdomains: 'abcd', maxZoom: 11 }
   );
 
-  // The raster basemap's own borders are far too faint to guess against, so
-  // country lines are drawn as vectors on top of whichever basemap is showing.
+  /* Country borders.
+
+     These are drawn into their own *tile layer*, not as an SVG overlay. A vector
+     overlay is a separate element with its own transform, and during a zoom
+     animation it is re-based independently of the basemap — the borders visibly
+     slide off their coastlines mid-gesture. Two GridLayers, by contrast, run
+     identical transform maths on identical tile geometry, so the borders are
+     welded to the map at every zoom, including mid-animation.
+
+     Its own pane, because `.leaflet-tile-pane` carries the colour filter meant
+     for the basemap. 250 sits above the tiles (200) and below markers (400). */
+  map.createPane('borders');
+  const borderPane = map.getPane('borders');
+  borderPane.style.zIndex = 250;
+  borderPane.style.pointerEvents = 'none';
+
+  const BorderTiles = L.GridLayer.extend({
+    createTile: function (coords, done) {
+      const size = this.getTileSize();
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const tile = document.createElement('canvas');
+      tile.width = size.x * dpr;
+      tile.height = size.y * dpr;
+      tile.style.width = size.x + 'px';
+      tile.style.height = size.y + 'px';
+      // Off the critical path so panning never waits on drawing.
+      setTimeout(() => {
+        try { this._draw(tile, coords, size, dpr); done(null, tile); }
+        catch (err) { done(err, tile); }
+      }, 0);
+      return tile;
+    },
+
+    _draw: function (canvas, coords, size, dpr) {
+      if (!window.BORDER_LINES) return;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.strokeStyle = 'rgba(143, 179, 194, 0.9)';
+      ctx.lineWidth = 0.9;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+
+      const z = coords.z;
+      const tilesPerWorld = Math.pow(2, z);
+      const worldPx = size.x * tilesPerWorld;
+      const worldIndex = Math.floor(coords.x / tilesPerWorld);  // which repeated world
+      const originX = coords.x * size.x;
+      const originY = coords.y * size.y;
+
+      // Web Mercator by hand — 20k projections per tile through L.latLng objects
+      // is a lot of needless allocation.
+      const RAD = Math.PI / 180;
+      const projX = (lon) => (lon + 180) / 360 * worldPx;
+      const projY = (lat) => {
+        const s = Math.sin(Math.max(-85.05, Math.min(85.05, lat)) * RAD);
+        return worldPx * (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI));
+      };
+
+      // Tile bounds in degrees. Shift wrapped copies back into [-180, 180] so
+      // they can be compared against the feature bounding boxes.
+      const lonShift = -worldIndex * 360;
+      const pad = 360 / tilesPerWorld * 0.05 + 0.5;
+      const west  = (originX / worldPx) * 360 - 180 + lonShift - pad;
+      const east  = ((originX + size.x) / worldPx) * 360 - 180 + lonShift + pad;
+      const north = unprojectLat(originY, worldPx) + pad;
+      const south = unprojectLat(originY + size.y, worldPx) - pad;
+
+      const lines = window.BORDER_LINES;
+      ctx.beginPath();
+      for (let i = 0; i < lines.length; i++) {
+        const b = lines[i].bbox;
+        if (b[2] < west || b[0] > east || b[3] < south || b[1] > north) continue;
+        const pts = lines[i].pts;
+        for (let k = 0; k < pts.length; k += 2) {
+          const x = projX(pts[k]) + worldIndex * worldPx - originX;
+          const y = projY(pts[k + 1]) - originY;
+          if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+  });
+
+  function unprojectLat(y, worldPx) {
+    const n = Math.PI * (1 - 2 * y / worldPx);
+    return Math.atan(Math.sinh(n)) * 180 / Math.PI;
+  }
+
   fetch('borders.json')
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(geo => {
-      L.geoJSON(geo, {
-        interactive: false,
-        style: { color: '#8fb3c2', weight: 0.9, opacity: 0.9, fill: false }
-      }).addTo(map);
+      // Flatten to plain coordinate arrays with a bounding box each — the tile
+      // renderer walks this on every tile, so keep it allocation-free.
+      const out = [];
+      geo.features.forEach(f => {
+        const g = f.geometry;
+        const parts = g.type === 'LineString' ? [g.coordinates] : g.coordinates;
+        parts.forEach(part => {
+          const pts = new Float64Array(part.length * 2);
+          let minX = 180, minY = 90, maxX = -180, maxY = -90;
+          for (let i = 0; i < part.length; i++) {
+            const lon = part[i][0], lat = part[i][1];
+            pts[i * 2] = lon; pts[i * 2 + 1] = lat;
+            if (lon < minX) minX = lon; if (lon > maxX) maxX = lon;
+            if (lat < minY) minY = lat; if (lat > maxY) maxY = lat;
+          }
+          out.push({ pts: pts, bbox: [minX, minY, maxX, maxY] });
+        });
+      });
+      window.BORDER_LINES = out;
+      new BorderTiles({ pane: 'borders', maxZoom: 11, updateWhenIdle: false }).addTo(map);
     })
     .catch(() => { /* borders are an enhancement — the game works without them */ });
 

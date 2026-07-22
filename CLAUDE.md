@@ -46,12 +46,32 @@ arc draws between your pin and the truth.
   commit, `dark_all` (labelled) is swapped in so you can learn the surrounding
   geography. This swap is the single most useful thing in the app; don't
   "simplify" it away.
-- **Country borders are a vector overlay, not the basemap's.** `borders.json`
-  (Natural Earth 50m boundary lines, ~20k points, 113 KB gzipped) is fetched and
-  drawn over whichever basemap is showing. CARTO's own borders are far too faint
-  to guess against. Coastlines are *not* in this file — they come from the
-  land/sea contrast in the raster, which avoids a vector coastline sitting
-  visibly offset from the raster one at high zoom.
+- **Country borders are their own tile layer, not a vector overlay.** This is the
+  important one. `borders.json` (Natural Earth 50m boundary lines, ~20k points,
+  113 KB gzipped) is drawn into canvas tiles by a `L.GridLayer` subclass —
+  `BorderTiles` in `app.js`. CARTO's own borders are far too faint to guess against.
+
+  It started as an `L.geoJSON` overlay and that was wrong. A vector overlay is a
+  separate element with its own transform, re-based independently of the basemap
+  during a zoom animation, so the borders visibly slide off their coastlines while
+  you scroll. Nudging the animation ordering reduced it but never removed it,
+  because the two layers are fundamentally different kinds of object. Two
+  GridLayers run identical transform maths on identical tile geometry, so borders
+  are welded to the basemap at every zoom — they even go blurry and re-sharpen in
+  step with it. **Do not "simplify" this back to an overlay.**
+
+  It lives in its own `borders` pane at z-index 250 (above tiles at 200, below
+  markers at 400) because `.leaflet-tile-pane` carries the basemap colour filter,
+  which would recolour the lines.
+
+  Projection is done by hand in `_draw` rather than through `map.project` — 20k
+  `L.latLng` allocations per tile is pointless churn. `worldIndex` handles the
+  repeated world copies either side of the antimeridian; without it, borders
+  vanish on wrapped tiles. Tiles render in a `setTimeout` so panning never blocks
+  on drawing.
+
+  Coastlines are *not* in this file — they come from the land/sea contrast in the
+  raster.
 - **Tile filter is not decoration.** `.leaflet-tile-pane { filter: brightness(1.25)
   contrast(1.08) sepia(.4) hue-rotate(158deg) saturate(1.9) }` lifts land off
   water and tints the sea from neutral grey toward the chart palette.
@@ -105,9 +125,9 @@ arc draws between your pin and the truth.
   answer before the line got there. `prefers-reduced-motion` draws it complete
   immediately, and a timeout backstops the case where rAF never runs.
 - **The border layer is not a performance problem.** It was the first suspect for
-  slow zoom; benchmarked at 390 paths / ~20k points it costs nothing measurable
-  (p50 8.3 ms per frame during continuous zoom, with headroom to spare). Don't
-  downgrade to the 110m dataset to "fix" a zoom complaint — measure first.
+  slow zoom; benchmarked at ~20k points it costs nothing measurable (p50 8.3 ms
+  per frame during continuous zoom). Don't downgrade to the 110m dataset to "fix"
+  a zoom complaint — measure first.
 - **Rhumb bearing, not great-circle.** `bearing()` in `app.js` uses the rhumb
   line so "WSW of it" matches the Mercator map the player is looking at. A
   great-circle heading says things like "NW" for a guess that is visibly
