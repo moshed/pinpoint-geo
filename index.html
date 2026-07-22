@@ -31,7 +31,7 @@
   </div>
 
   <div class="controls">
-    <button type="button" class="unit" id="unit-toggle" aria-label="Switch distance units">km</button>
+    <button type="button" class="unit" id="unit-toggle" aria-label="Switch distance units">mi</button>
     <button type="button" class="ghost" id="open-settings" aria-expanded="false" aria-controls="settings">Topics</button>
   </div>
 </header>
@@ -81,7 +81,10 @@
           </div>
           <div class="range-block score">
             <span class="range-k">Points</span>
-            <span class="range-v" id="r-score">0</span>
+            <span class="range-line">
+              <span class="range-v" id="r-score">0</span>
+              <span class="range-u">/100</span>
+            </span>
           </div>
         </div>
         <div class="answer">

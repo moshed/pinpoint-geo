@@ -16,6 +16,7 @@ Four static files. No build step, no dependencies to install, no backend.
 | `styles.css` | All styling. Design tokens at the top under `:root`. |
 | `app.js` | Game logic in one IIFE — geo maths, round flow, rendering, persistence. |
 | `questions.js` | The 350-question bank as a plain `const QUESTIONS = [...]`. |
+| `borders.json` | Natural Earth 50m land boundary lines, minified. Fetched at runtime. |
 
 Deployed by GitHub Pages straight off `main` at repo root (`moshed/pinpoint-geo`).
 `CNAME` holds the custom domain — GitHub rewrites this file if the domain is
@@ -41,14 +42,37 @@ arc draws between your pin and the truth.
   commit, `dark_all` (labelled) is swapped in so you can learn the surrounding
   geography. This swap is the single most useful thing in the app; don't
   "simplify" it away.
-- **Tile filter is not decoration.** `.leaflet-tile-pane { filter: brightness(1.75)… }`
-  — CARTO's dark basemap is close to unreadable at world zoom without it.
+- **Country borders are a vector overlay, not the basemap's.** `borders.json`
+  (Natural Earth 50m boundary lines, ~20k points, 113 KB gzipped) is fetched and
+  drawn over whichever basemap is showing. CARTO's own borders are far too faint
+  to guess against. Coastlines are *not* in this file — they come from the
+  land/sea contrast in the raster, which avoids a vector coastline sitting
+  visibly offset from the raster one at high zoom.
+- **Tile filter is not decoration.** `.leaflet-tile-pane { filter: brightness(1.25)
+  contrast(1.08) sepia(.4) hue-rotate(158deg) saturate(1.9) }` lifts land off
+  water and tints the sea from neutral grey toward the chart palette.
+- **`.leaflet-container` background must match the filtered ocean colour**
+  (currently `#252e33`). Fractional zoom leaves hairline sub-pixel gaps between
+  tiles; whatever is behind them shows through as a visible 256 px grid. Matching
+  the colour is what makes the seams disappear — if you retune the filter, sample
+  the new ocean colour and update both `.leaflet-container` and `#map`.
+- **Smooth zoom comes from `zoomSnap: 0`.** Leaflet's default snaps the wheel to
+  whole zoom levels, which is what felt stepped. With `zoomDelta: 0.4` and
+  `wheelPxPerZoomLevel: 200` the wheel is continuous. This is also what surfaced
+  the tile-seam problem above — the two are linked.
 - **Rhumb bearing, not great-circle.** `bearing()` in `app.js` uses the rhumb
   line so "WSW of it" matches the Mercator map the player is looking at. A
   great-circle heading says things like "NW" for a guess that is visibly
   south-west, which reads as a bug.
-- **Scoring:** `5000 · e^(−km/1500)`, with anything inside 25 km counted as a
-  perfect 5000. Roughly: 500 km ≈ 3,580 pts, 1,000 km ≈ 2,570, 2,500 km ≈ 945.
+- **Scoring copies GeoHistory: out of 100, computed in miles.** `100 · e^(−mi/1400)`,
+  with anything inside 15 miles counted as a flat 100. That constant is pinned to
+  GeoHistory's one published data point — 500 miles off costs you 30 points — and
+  reproduces it exactly. Roughly: 100 mi ≈ 93, 250 mi ≈ 84, 500 mi ≈ 70,
+  1,000 mi ≈ 49, 2,000 mi ≈ 24, 4,000 mi ≈ 6. Scoring is always done in miles so
+  the curve doesn't shift when the km/mi toggle flips; **miles is the default unit**.
+- **`STORE` is versioned.** It went to `pinpoint.v2` when scoring changed from a
+  5,000-point scale to 100 — old rounds would otherwise wreck the mean-score
+  gauge. Bump it again on any change to what a stored round means.
 - **Question ids are derived from the answer name**, slugified at the bottom of
   `questions.js`. So answer names must stay unique — a duplicate silently
   collapses two questions into one "already played" entry. Adding questions

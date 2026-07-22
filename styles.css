@@ -249,14 +249,20 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #map {
   position: absolute;
   inset: 0;
-  background: var(--abyss);
+  background: #252e33;
 }
 
-.leaflet-container { background: #041018; font-family: var(--display); }
+/* Must match the filtered ocean colour below. Fractional zoom leaves hairline
+   sub-pixel gaps between tiles, and whatever sits behind them shows through as
+   a visible grid — matching the colour is what makes the seams disappear. */
+.leaflet-container { background: #252e33; font-family: var(--display); }
 
 /* CARTO's dark basemap is beautiful and almost unreadable at world zoom.
-   Lift the land off the water so coastlines are actually guessable. */
-.leaflet-tile-pane { filter: brightness(1.75) contrast(1.22) saturate(.85); }
+   Lift the land off the water, and tint the sea toward the chart palette
+   instead of leaving it a neutral grey. */
+.leaflet-tile-pane {
+  filter: brightness(1.25) contrast(1.08) sepia(.4) hue-rotate(158deg) saturate(1.9);
+}
 .leaflet-control-attribution {
   background: rgba(6, 23, 34, .82) !important;
   color: #547484 !important;
@@ -428,7 +434,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 }
 
 .range-block { display: flex; flex-direction: column; gap: 2px; }
-.range-block.score { margin-left: auto; text-align: right; }
+.range-block.score { margin-left: auto; text-align: right; align-items: flex-end; }
 
 .range-k {
   font-family: var(--mono);

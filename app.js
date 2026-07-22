@@ -4,10 +4,12 @@
 (function () {
   'use strict';
 
-  const STORE = 'pinpoint.v1';
-  const MAX_POINTS = 5000;
-  const PERFECT_KM = 25;      // inside this, you nailed it
-  const FALLOFF_KM = 1500;    // score halves roughly every 1,040 km
+  const STORE = 'pinpoint.v2';   // v1 stored 5000-point scores; don't average them in
+  const MAX_POINTS = 100;
+  const PERFECT_MI = 15;         // inside this, call it nailed
+  // GeoHistory's curve, matched to its one published data point: 500 miles off
+  // costs you 30 points. Harsh up close, forgiving once you're already lost.
+  const FALLOFF_MI = 1400;
 
   const TOPICS = [
     { id: 'history',  name: 'History & events' },
@@ -35,7 +37,7 @@
   /* ── persisted state ──────────────────────────────────── */
 
   const defaults = () => ({
-    unit: 'km',
+    unit: 'mi',
     topics: TOPICS.map(t => t.id),
     played: [],
     rounds: []   // { n, km, score, name }
@@ -49,7 +51,7 @@
       if (!raw || typeof raw !== 'object') return defaults();
       const d = defaults();
       return {
-        unit: raw.unit === 'mi' ? 'mi' : 'km',
+        unit: raw.unit === 'km' ? 'km' : 'mi',
         topics: Array.isArray(raw.topics) && raw.topics.length ? raw.topics : d.topics,
         played: Array.isArray(raw.played) ? raw.played : [],
         rounds: Array.isArray(raw.rounds) ? raw.rounds : []
@@ -117,9 +119,12 @@
     return pts;
   }
 
+  // Scored in miles regardless of the display unit, so the curve doesn't move
+  // when you flip the km/mi toggle.
   function scoreFor(km) {
-    if (km <= PERFECT_KM) return MAX_POINTS;
-    return Math.max(0, Math.round(MAX_POINTS * Math.exp(-km / FALLOFF_KM)));
+    const mi = km * 0.621371;
+    if (mi <= PERFECT_MI) return MAX_POINTS;
+    return Math.max(0, Math.round(MAX_POINTS * Math.exp(-mi / FALLOFF_MI)));
   }
 
   /* ── formatting ───────────────────────────────────────── */
@@ -148,7 +153,13 @@
     zoomControl: true,
     attributionControl: true,
     maxBounds: [[-88, -230], [88, 230]],
-    maxBoundsViscosity: 0.6
+    maxBoundsViscosity: 0.6,
+    // Continuous zoom. zoomSnap 0 stops the wheel from jumping between whole
+    // zoom levels, which is what makes the default feel stepped on a trackpad.
+    zoomSnap: 0,
+    zoomDelta: 0.4,
+    wheelPxPerZoomLevel: 200,
+    wheelDebounceTime: 12
   }).setView([25, 10], 2);
 
   const ATTRIB = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>';
@@ -163,6 +174,18 @@
     'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
     { attribution: ATTRIB, subdomains: 'abcd', maxZoom: 11 }
   );
+
+  // The raster basemap's own borders are far too faint to guess against, so
+  // country lines are drawn as vectors on top of whichever basemap is showing.
+  fetch('borders.json')
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(geo => {
+      L.geoJSON(geo, {
+        interactive: false,
+        style: { color: '#8fb3c2', weight: 0.9, opacity: 0.9, fill: false }
+      }).addTo(map);
+    })
+    .catch(() => { /* borders are an enhancement — the game works without them */ });
 
   const pinIcon = (cls) => L.divIcon({
     className: '',
@@ -283,7 +306,7 @@
     el.dockIdle.hidden = true;
     el.dockResult.hidden = false;
     el.rUnit.textContent = unitLabel();
-    el.rBearing.textContent = km <= PERFECT_KM ? 'on it' : brg + ' of it';
+    el.rBearing.textContent = km * 0.621371 <= PERFECT_MI ? 'on it' : brg + ' of it';
     el.rName.textContent = current.a;
     el.rNote.textContent = current.note || '';
     countTo(el.rDist, toUnit(km), km);
@@ -329,9 +352,9 @@
   }
 
   function scoreColor(pts) {
-    if (pts >= 4000) return 'var(--fix)';
-    if (pts >= 2000) return '#9fd9c4';
-    if (pts >= 800) return 'var(--signal)';
+    if (pts >= 80) return 'var(--fix)';
+    if (pts >= 50) return '#9fd9c4';
+    if (pts >= 20) return 'var(--signal)';
     return '#c9765a';
   }
 
