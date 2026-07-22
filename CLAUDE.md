@@ -61,17 +61,36 @@ arc draws between your pin and the truth.
   the colour is what makes the seams disappear — if you retune the filter, sample
   the new ocean colour and update both `.leaflet-container` and `#map`.
 - **Wheel zoom is hand-rolled; Leaflet's is disabled** (`scrollWheelZoom: false`).
-  Leaflet accumulates wheel deltas behind a debounce timer and applies them as one
-  animated jump, and it runs them through a log-compression curve tied to
-  `wheelPxPerZoomLevel`. On a Mac trackpad that reads as both slow and steppy.
-  `directWheelZoom()` in `app.js` instead applies every wheel event straight to
-  `setZoomAround(..., {animate:false})`, throttled to one call per animation frame.
-  Measured: a 300 px two-finger swipe moves ~2 zoom levels and updates on **every**
-  frame (31 distinct zoom values over 31 frames), at a p50 frame cost of 8.3 ms.
-  Tuning lives in one constant — `speed`, 0.007 per wheel pixel, and 0.03 for
-  ctrl+wheel, which is how macOS pinch-to-zoom arrives. `zoomSnap: 0` is still
-  required or every step would round to a whole level. Do not "restore"
-  `wheelPxPerZoomLevel` — it does nothing now.
+  `wheelZoom()` in `app.js` accumulates an absolute zoom target from raw wheel
+  deltas — linear, no debounce — and hands it to Leaflet's **animated** zoom path.
+  Two traps are baked into that design, both found the hard way:
+
+  1. **Never zoom with `{animate:false}` per frame.** A non-animated `setView`
+     fires `viewprereset`, and `GridLayer`'s handler for it destroys every tile.
+     Do that each frame and the map is *blank for the entire gesture* — measured
+     at 24 of 26 frames with zero tile coverage. The animated path CSS-scales the
+     existing tiles instead, and stays at full coverage throughout. Overriding
+     `_invalidateAll` does not help: `getEvents()` captures the function reference
+     when the layer is added, so a later reassignment is never seen.
+  2. **Leaflet silently drops a zoom request while one is animating**
+     (`_tryAnimatedZoom` returns true and `setView` bails). Fire once and the map
+     stops at the first step. Hence `pump()` re-firing on `zoomend` until the map
+     reaches the target — that is what makes the total travel correct.
+
+  `pump()` is guarded on a recent wheel event, or the `zoomend` from the reveal's
+  `fitBounds` would yank the map back to a stale target.
+
+  Tuning is one constant: `speed`, 0.007 per wheel pixel (0.03 for ctrl+wheel,
+  which is how macOS pinch-to-zoom arrives). A 300 px two-finger swipe travels
+  ~2 zoom levels. `zoomSnap: 0` is required or each step rounds to a whole level.
+  `wheelPxPerZoomLevel` does nothing now — don't "restore" it.
+- **The reveal is animated and the answer is withheld until it lands.** On commit,
+  `fitBounds` frames the whole shot first, then the dashed great-circle line grows
+  out from your pin toward the truth over `REVEAL_MS`, easing out, while the
+  distance readout counts up on the same beat. The answer marker and its label are
+  added only when the line arrives — showing them up front would give away the
+  answer before the line got there. `prefers-reduced-motion` draws it complete
+  immediately, and a timeout backstops the case where rAF never runs.
 - **The border layer is not a performance problem.** It was the first suspect for
   slow zoom; benchmarked at 390 paths / ~20k points it costs nothing measurable
   (p50 8.3 ms per frame during continuous zoom, with headroom to spare). Don't
@@ -173,10 +192,19 @@ dependencies:
 # connect to webSocketDebuggerUrl, and Runtime.evaluate with awaitPromise:true
 ```
 
-Useful probes: `img.leaflet-tile` rendered width scales continuously with
-fractional zoom (good for proving smooth zoom); the tile `src` path gives the
-integer zoom level (good for measuring sensitivity). The map pane's transform is
-reset after every non-animated `setView`, so it is useless as a zoom probe.
+Useful probes, all used to settle the zoom work:
+
+- **Tile coverage** — sum the viewport intersection of every `img.leaflet-tile-loaded`
+  and divide by the viewport area. This is what caught the blank-map regression;
+  tile *counts* look fine while coverage is zero.
+- **Zoom** — read `map.getZoom()` directly. Reading it from a tile `src` breaks once
+  several zoom levels are retained, and the map pane's transform is reset after every
+  non-animated `setView`, so neither works as a general probe.
+- **Reveal animation** — find the line by `stroke-dasharray="5 5"` (the borders share
+  its SVG pane) and sample `getTotalLength()` per frame.
+
+Sample for at least `REVEAL_MS` plus a margin when testing the reveal — a window
+that stops early makes a working animation look like it never finishes.
 
 ## Deployment
 

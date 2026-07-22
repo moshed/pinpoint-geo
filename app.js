@@ -10,6 +10,10 @@
   // GeoHistory's curve, matched to its one published data point: 500 miles off
   // costs you 30 points. Harsh up close, forgiving once you're already lost.
   const FALLOFF_MI = 1400;
+  const REVEAL_MS = 850;   // line growth and the distance readout share this beat
+
+  const prefersReducedMotion = () =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // Supabase "Misc" project. This is the publishable key — it is meant to ship in
   // client code. It grants INSERT on pin_rounds and nothing else: the table has no
@@ -227,16 +231,34 @@
     scrollWheelZoom: false
   }).setView([25, 10], 2);
 
-  /* Trackpad-grade zoom: apply every wheel event directly, at most once per
-     frame, so zoom tracks the fingers instead of arriving in debounced jumps. */
-  (function directWheelZoom() {
-    const el = map.getContainer();
-    let target = map.getZoom(), point = null, frame = null, last = 0;
+  /* Trackpad zoom.
 
-    const apply = () => {
-      frame = null;
-      map.setZoomAround(point, target, { animate: false });
+     Leaflet's own wheel handler batches deltas behind a debounce timer and runs
+     them through a log curve, which reads as slow and steppy. But zooming with
+     {animate:false} per frame — the obvious alternative — is worse: a
+     non-animated setView fires `viewprereset`, and GridLayer's handler for that
+     throws away every tile. Do it every frame and the map is blank for the whole
+     gesture, because tiles never survive long enough to load.
+
+     So: accumulate an absolute zoom target from the raw wheel deltas (fast,
+     linear, no debounce), and hand it to Leaflet's *animated* path, which
+     CSS-scales the existing tiles instead of dropping them. Leaflet silently
+     drops a zoom request while one is already animating, so `pump` re-fires on
+     zoomend until the map has caught up with the target. */
+  (function wheelZoom() {
+    const el = map.getContainer();
+    const DURATION = 0.12;
+    let target = map.getZoom(), point = null, last = -1e6;
+
+    const gestureActive = () => performance.now() - last < 400;
+
+    const pump = () => {
+      if (!gestureActive() || !point) return;      // don't hijack fitBounds/setView
+      if (map._animatingZoom) return;              // request would be dropped; zoomend retries
+      if (Math.abs(target - map.getZoom()) < 0.004) return;
+      map.setZoomAround(point, target, { animate: true, duration: DURATION });
     };
+    map.on('zoomend', pump);
 
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
@@ -244,16 +266,15 @@
       if (e.deltaMode === 1) dy *= 16;        // lines
       else if (e.deltaMode === 2) dy *= 400;  // pages
 
-      const now = e.timeStamp || performance.now();
-      // A fresh gesture: resync, in case zoom moved via buttons or a reveal.
-      if (now - last > 250) target = map.getZoom();
+      const now = performance.now();
+      if (now - last > 250) target = map.getZoom();   // fresh gesture: resync
       last = now;
 
-      // macOS pinch-to-zoom arrives as ctrl+wheel with much smaller deltas.
+      // macOS pinch-to-zoom arrives as ctrl+wheel, with much smaller deltas.
       const speed = e.ctrlKey ? 0.03 : 0.007;
       target = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), target - dy * speed));
       point = map.mouseEventToContainerPoint(e);
-      if (!frame) frame = requestAnimationFrame(apply);
+      pump();
     }, { passive: false });
   })();
 
@@ -379,17 +400,9 @@
     map.addLayer(namedLayer);
 
     const path = arc(guess, truth, 96);
-    line = L.polyline(path, {
-      color: '#7e9ca9', weight: 1.5, opacity: .85, dashArray: '5 5'
-    }).addTo(map);
-
     const fixLatLng = [truth.lat, path[path.length - 1][1]];
-    fixMarker = L.marker(fixLatLng, { icon: pinIcon('pin-fix'), keyboard: false }).addTo(map);
-    fixLabel = L.marker(fixLatLng, {
-      icon: L.divIcon({ className: '', html: '<div class="fix-label">' + escapeHtml(current.a) + '</div>', iconSize: [0, 0] }),
-      keyboard: false, interactive: false
-    }).addTo(map);
 
+    // Frame the whole shot first, then run the line out to the answer inside it.
     const pad = window.innerWidth < 700 ? [30, 120] : [40, 150];
     map.fitBounds(L.latLngBounds(path), {
       paddingTopLeft: [pad[0], pad[1]],
@@ -397,6 +410,41 @@
       maxZoom: 8,
       animate: true
     });
+
+    line = L.polyline([path[0]], {
+      color: '#7e9ca9', weight: 1.5, opacity: .85, dashArray: '5 5'
+    }).addTo(map);
+
+    const landAnswer = () => {
+      if (phase !== 'revealed' || !line) return;       // round moved on
+      fixMarker = L.marker(fixLatLng, { icon: pinIcon('pin-fix'), keyboard: false }).addTo(map);
+      fixLabel = L.marker(fixLatLng, {
+        icon: L.divIcon({ className: '', html: '<div class="fix-label">' + escapeHtml(current.a) + '</div>', iconSize: [0, 0] }),
+        keyboard: false, interactive: false
+      }).addTo(map);
+    };
+
+    // The line runs out from your pin toward the truth, in step with the
+    // distance readout counting up — so you watch the miss accumulate.
+    if (prefersReducedMotion()) {
+      line.setLatLngs(path);
+      landAnswer();
+    } else {
+      const t0 = performance.now();
+      (function grow(now) {
+        if (phase !== 'revealed' || !line) return;
+        const p = Math.max(0, Math.min(1, (now - t0) / REVEAL_MS));
+        const eased = 1 - Math.pow(1 - p, 3);
+        const upto = Math.max(2, Math.round(eased * (path.length - 1)) + 1);
+        line.setLatLngs(path.slice(0, upto));
+        if (p < 1) requestAnimationFrame(grow);
+        else { line.setLatLngs(path); landAnswer(); }
+      })(t0);
+      // Belt and braces: if rAF never runs (backgrounded tab), still land it.
+      setTimeout(() => {
+        if (phase === 'revealed' && line && !fixMarker) { line.setLatLngs(path); landAnswer(); }
+      }, REVEAL_MS + 250);
+    }
 
     el.dockIdle.hidden = true;
     el.dockResult.hidden = false;
@@ -418,14 +466,13 @@
 
   // The ranging readout: numbers spin up like a rangefinder settling.
   function countTo(node, target, km) {
-    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const render = (v) => {
       node.textContent = km === null
         ? Math.round(v).toLocaleString('en-US')
         : (v < 10 ? v.toFixed(1) : Math.round(v).toLocaleString('en-US'));
     };
-    if (reduce) { render(target); return; }
-    const dur = 850;
+    if (prefersReducedMotion()) { render(target); return; }
+    const dur = REVEAL_MS;
     let t0 = null, done = false;
     requestAnimationFrame(function step(now) {
       if (done) return;
