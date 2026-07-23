@@ -65,11 +65,13 @@ arc draws between your pin and the truth.
 
   Line styling: each line is a dark **casing** (wider) under a bright stroke, so
   it reads on both dark ocean and bright desert. `mapdata.json` carries four
-  line sets: `coast` (land/water shoreline) and `lakes` (lake shores) are gold
-  like the country lines, so every landmass is fully outlined where it meets
-  water — Natural Earth's `admin_0_boundary_lines_land` deliberately omits
-  coasts, which is why coastlines were missing before. `countries` are gold and
-  heavier; `states` white and lighter, from z4 only (`cased()` in `_draw`).
+  line sets: `coast` (shoreline) is drawn in the **same gold and weight** as
+  `countries`, because a country's outline is its land borders *plus* its
+  coast and they should read as one line — this is why island nations like
+  Australia (all coast, no land border) are outlined as boldly as anyone else.
+  Natural Earth's `admin_0_boundary_lines_land` omits coasts by design, which
+  is why coastlines were missing before. `lakes` are a slightly lighter gold;
+  `states` white and thinner, from z4 only (`cased()` in `_draw`).
   **Canvas is drawn at `min(3, devicePixelRatio)`** — capping at 2 left lines
   pixelly on 3× phone screens; 3 fixes it. The
   lines live in their own `lines` pane at z-index 350 (above tiles 200, below

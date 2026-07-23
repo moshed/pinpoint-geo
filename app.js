@@ -401,13 +401,16 @@
         ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
       };
 
-      const GOLD = 'rgba(255,241,186,';
-      // Coast and lake shores where land meets water — the water/land "border".
-      // Same gold family as country lines so every landmass is fully outlined.
-      cased(D.coast, GOLD + '0.9)', z >= 5 ? 1.0 : 0.9, 0.55);
-      if (z >= 3) cased(D.lakes, GOLD + '0.8)', z >= 6 ? 0.8 : 0.7, 0.5);
+      const GOLD = 'rgba(255,241,186,0.98)';
+      const cw = z >= 5 ? 1.2 : 1.1;   // country/coast weight
+      // Coast and country lines are the same gold and weight — a country's
+      // outline is its land borders PLUS its coast, and they should read as one.
+      // This is why island nations like Australia (all coast, no land border) now
+      // look as bordered as anyone else.
+      cased(D.coast, GOLD, cw, 0.6);
+      if (z >= 3) cased(D.lakes, 'rgba(255,241,186,0.82)', z >= 6 ? 0.8 : 0.7, 0.5);
       if (z >= 4) cased(D.states, 'rgba(255,255,255,0.72)', z >= 6 ? 0.8 : 0.7, 0.5);
-      cased(D.countries, GOLD + '0.98)', z >= 5 ? 1.2 : 1.1, 0.6);
+      cased(D.countries, GOLD, cw, 0.6);
     }
   });
 
