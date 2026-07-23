@@ -16,7 +16,7 @@ Four static files. No build step, no dependencies to install, no backend.
 | `styles.css` | All styling. Design tokens at the top under `:root`. |
 | `app.js` | Game logic in one IIFE — geo maths, round flow, rendering, persistence. |
 | `questions.js` | The 350-question bank as a plain `const QUESTIONS = [...]`. |
-| `mapdata.json` | The entire map — Natural Earth 50m land, lakes, country lines and state/province lines, minified (~645 KB gzipped). Fetched once at runtime. |
+| `mapdata.json` | Country + state/province boundary lines (Natural Earth 50m), minified (~206 KB gzipped). Drawn over the satellite basemap. Fetched once at runtime. |
 
 Results are also logged to Supabase so history survives a cleared browser — see
 **[CLAUDE-supabase.md](CLAUDE-supabase.md)** for the schema, the no-login access
@@ -28,8 +28,9 @@ changed in repo settings, so edit it there, not here.
 
 ## Design direction
 
-A surveyor's console. Deep sea-chart ink, monospace data readouts, hairline
-rules. Two accent colours carry meaning and are used for nothing else:
+A surveyor's console over satellite imagery. Dark UI chrome, monospace data
+readouts, hairline rules, and toned-down real terrain under gold/white admin
+lines. Two accent colours carry meaning and are used for nothing else:
 
 - **amber `--signal` `#ffa62b`** — always the player's guess
 - **cyan `--fix` `#5fd4ff`** — always the true answer
@@ -41,41 +42,42 @@ arc draws between your pin and the truth.
 
 ## Decisions worth remembering
 
-- **The map is fully self-rendered from vector data — there is no raster basemap.**
-  This is the biggest architectural decision. `VectorMap` in `app.js` is an
-  `L.GridLayer` subclass that draws `mapdata.json` (land + lakes as filled
-  polygons, country + state lines as strokes) into canvas tiles. Three reasons it
-  is not CARTO raster tiles:
-  1. **Only the lines the player wants.** CARTO bakes rivers, roads and county
-     lines into the land at z7+, and they *cannot* be filtered out — measured, the
-     faint clutter sits at the same luminance as the ocean, so no contrast curve
-     separates them. Drawing the map ourselves means those lines don't exist.
-  2. **One layer, not two.** It replaced a raster basemap *plus* a canvas border
-     overlay. Half the tiles to transform per zoom frame, and zero raster HTTP
-     fetches mid-gesture — both were making zoom feel heavy.
-  3. **Borders can't drift.** Land and borders are in the *same* canvas tile, so
-     they are one object and cannot come apart (the whole saga below).
+- **The basemap is satellite imagery; the lines are drawn on top.** This is the
+  core map decision, and it arrived in two steps. The basemap is **Esri World
+  Imagery** raster tiles (free, no key) — real satellite photography, like
+  GeoHistory. Country and state lines are drawn over it by `LinesLayer` in
+  `app.js`, an `L.GridLayer` subclass rendering `mapdata.json` (`countries` +
+  `states`, lines only) into canvas tiles.
 
-  Colours live in `MAP_COLORS` (land `#0c1a22`, lake/ocean `#22333b`, country and
-  state strokes). **`.leaflet-container` / `#map` background must equal the ocean
-  colour** — the canvas is transparent over water and in the sub-pixel gaps
-  fractional zoom leaves, so the container shows through as the sea. Change one,
-  change all three.
+  Why imagery + our own lines rather than a styled raster: satellite is
+  *photographic*, so it carries no road/river/county **lines** to clutter the map
+  — the exact problem CARTO's raster had, where the baked-in clutter sat at the
+  same luminance as the ocean and no contrast curve could remove it. So we get
+  real terrain AND only the admin lines we want.
 
-  Rendering detail: Web Mercator is projected by hand in `_draw` (projecting
-  ~100k points per tile through `map.project` would allocate absurdly); features
-  are culled by bounding box against the tile; `worldIndex` offsets the repeated
-  world copies at the antimeridian, without which land vanishes on wrapped tiles;
-  states draw only from z4 (noise at world zoom); tiles render in a `setTimeout`
-  so panning never blocks on drawing. Measured ~1 ms median / 5.5 ms worst per
-  tile — the land fill is cheap because of the bbox cull.
+  **Two GridLayers, and they stay welded.** The satellite raster and the line
+  canvas are sibling tile layers sharing the identical tile transform, so the
+  lines never drift from the imagery during a zoom (measured: zero scale mismatch
+  across a gesture). An SVG *overlay* drifts — a sibling tile layer does not. This
+  is the resolution of the long borders-drift saga: the earlier "one combined
+  canvas layer" also solved it, but satellite forced two layers again, and two
+  *tile* layers are fine; only the overlay pane was the problem.
+
+  Line styling: each line is a dark **casing** (wider) under a bright stroke, so
+  it reads on both dark ocean and bright desert. Countries are warm gold and
+  heavier; states white and lighter, from z4 only (`cased()` in `_draw`). The
+  lines live in their own `lines` pane at z-index 350 (above tiles 200, below
+  markers 400). Web Mercator is projected by hand and features culled by bbox, as
+  before. The imagery is toned down by `.sat-tiles { filter: brightness(.82)
+  saturate(.92) }` for line contrast and to sit closer to the dark palette.
+  `#map` / `.leaflet-container` background is just a deep-water tone shown until
+  tiles load — it is no longer load-bearing (satellite covers the ocean).
 - **Labels appear on reveal only, as a transparent labels-only raster.** While
   guessing there are no place names (they'd be the answer key). On commit,
-  `labelsLayer` (CARTO `dark_only_labels`, text only — no lines, so it doesn't
-  reintroduce clutter) is added in the marker pane so you can learn the
-  surrounding geography, and removed again on the next round. This is the one
-  remaining CARTO dependency, and it's cosmetic — the game is fully playable if it
-  fails to load.
+  `labelsLayer` (CARTO `dark_only_labels`, text only — no lines) is added in the
+  marker pane so you can learn the surrounding geography, and removed on the next
+  round. It reads well over the toned satellite. Cosmetic — the game is playable
+  if it fails to load.
 - **Wheel zoom is hand-rolled; Leaflet's is disabled** (`scrollWheelZoom: false`).
   `wheelZoom()` in `app.js` accumulates an absolute zoom target from raw wheel
   deltas — linear, no debounce — and hands it to Leaflet's **animated** zoom path.
@@ -113,19 +115,20 @@ arc draws between your pin and the truth.
   which is how macOS pinch-to-zoom arrives). A 300 px two-finger swipe travels
   ~2 zoom levels. `zoomSnap: 0` is required or each step rounds to a whole level.
   `wheelPxPerZoomLevel` does nothing now — don't "restore" it.
-- **The reveal is animated and the answer is withheld until it lands.** On commit,
-  `fitBounds` frames the whole shot first, then the dashed great-circle line grows
-  out from your pin toward the truth over `REVEAL_MS`, easing out, while the
-  distance readout counts up on the same beat. The answer marker and its label are
-  added only when the line arrives — showing them up front would give away the
-  answer before the line got there. `prefers-reduced-motion` draws it complete
-  immediately, and a timeout backstops the case where rAF never runs.
-- **The vector map is not a performance problem.** Drawing was the first suspect
-  for slow zoom both times; benchmarked, it costs nothing measurable — ~1 ms median
-  per tile to draw, p50 8.3 ms per frame during continuous zoom, zero long tasks
-  under aggressive zooming. The lag was the *approach* (raster + overlay, two
-  layers, raster fetches mid-gesture), not the geometry. Measure before blaming the
-  data; don't reach for the coarser 110m dataset reflexively.
+- **The reveal animates a path from your wrong guess to the right answer.** On
+  commit, `fitBounds` frames the shot, then a dashed great-circle line grows out
+  from your pin toward the truth over `REVEAL_MS`, easing out, with a **travel dot**
+  riding its tip and the distance readout counting up on the same beat. The line is
+  a bright gold stroke over a dark casing (`lineCasing` + `line`) so it reads on
+  satellite. The answer marker and label are added only when the line *lands* — and
+  the travel dot is removed then — because showing them up front gives away the
+  destination. `prefers-reduced-motion` draws it complete immediately; a timeout
+  backstops the backgrounded-tab case where rAF never runs.
+- **The map is not a performance problem.** Drawing the lines was the first suspect
+  for slow zoom; benchmarked, it costs nothing measurable — p50 8.3 ms per frame
+  during continuous zoom, zero long tasks under aggressive zooming. The lag was
+  always the *approach* (an SVG overlay, or a raster basemap fetching tiles
+  mid-gesture), not the geometry. Measure before blaming the data.
 - **Two game modes: Clues and Practice** (header toggle, `state.mode`). Clues is
   the trivia game — a clue, you locate the answer. Practice hands you the answer
   name (`q.a`) straight up to locate; the category chip reads "locate". Everything

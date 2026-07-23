@@ -274,13 +274,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
 #map {
   position: absolute;
   inset: 0;
-  background: #22333b;
+  background: #0a1520;   /* deep-water tone shown until satellite tiles load */
 }
 
-/* The vector map is transparent over ocean and in the sub-pixel gaps fractional
-   zoom leaves between tiles, so the container colour IS the sea. Keep it equal to
-   the layer's ocean/lake fill (MAP_COLORS in app.js). */
-.leaflet-container { background: #22333b; font-family: var(--display); }
+.leaflet-container { background: #0a1520; font-family: var(--display); }
+
+/* Tone the satellite imagery down a touch — legible line casings, and closer to
+   the app's dark console palette — without hiding the terrain. */
+.sat-tiles { filter: brightness(0.82) saturate(0.92); }
 
 /* While the wheel is turning, replace Leaflet's 0.25s eased zoom transition with
    a short linear one. Chained eased animations pulse; short linear ones join into
@@ -540,6 +541,15 @@ button { font: inherit; color: inherit; cursor: pointer; }
 @keyframes ping {
   from { transform: scale(.4); opacity: .9; }
   to   { transform: scale(2.2); opacity: 0; }
+}
+
+/* The dot that rides the tip of the reveal line as it travels to the answer. */
+.travel-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #ffd67a;
+  border: 2px solid #00121c;
+  box-shadow: 0 0 8px rgba(255, 214, 122, .9);
 }
 
 .fix-label {

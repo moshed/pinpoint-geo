@@ -301,33 +301,34 @@
     }, { passive: false });
   })();
 
-  const ATTRIB = 'Boundaries &copy; <a href="https://www.naturalearthdata.com/">Natural Earth</a>';
-  map.attributionControl.addAttribution(ATTRIB);
+  /* Basemap: real satellite imagery (Esri World Imagery, free, no key), like
+     GeoHistory. Country/state lines are drawn on top as their own canvas tile
+     layer (below). Satellite is photographic — it carries no road/river/county
+     LINES to clutter the map, which is why imagery + our own admin lines gives a
+     clean result the earlier CARTO raster could not.
 
-  /* The whole map is self-rendered from Natural Earth vector data — there is no
-     raster basemap. This is deliberate:
+     The `sat-tiles` class dims and desaturates the imagery a touch: keeps it
+     legible under the line casings and closer to the app's dark console palette
+     without hiding the terrain. */
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 11, className: 'sat-tiles', attribution: 'Imagery &copy; <a href="https://www.esri.com/">Esri</a>' }
+  ).addTo(map);
 
-     - The player asked for only country and state/region lines. CARTO's raster
-       bakes rivers, roads and county lines into the land at high zoom, and they
-       cannot be filtered out (measured: the faint clutter sits at the same
-       luminance as the ocean, so no contrast curve separates them). Drawing the
-       map ourselves means those lines simply don't exist.
-     - It is one tile layer, not a raster basemap plus a border overlay. Half the
-       tiles to transform per zoom frame, and no raster HTTP fetches mid-gesture —
-       both of which were making the zoom feel heavy.
-     - Borders drawn into the same tile grid as the land can never drift from it,
-       which an SVG overlay always eventually did.
+  /* Country + state lines, drawn into canvas tiles in their own pane above the
+     satellite. Two GridLayers share the exact same tile transform, so the lines
+     stay welded to the imagery at every zoom — an SVG overlay drifts, a sibling
+     tile layer does not (measured: zero scale mismatch across a zoom gesture).
 
-     `land` and `lakes` are filled polygons; `countries` and `states` are stroked
-     lines. States only appear from z4 — at world zoom they are noise. */
-  const MAP_COLORS = {
-    land:      '#0c1a22',
-    lake:      '#22333b',   // == ocean, so lakes read as water
-    country:   'rgba(190, 216, 227, 0.95)',
-    state:     'rgba(130, 170, 188, 0.66)'
-  };
+     Each line gets a dark casing under a bright stroke so it reads on both dark
+     ocean and bright desert. Countries are warm/gold and heavier; states are
+     white and lighter, and only appear from z4 (noise at world zoom). */
+  map.createPane('lines');
+  const linesPane = map.getPane('lines');
+  linesPane.style.zIndex = 350;          // above tiles (200), below markers (400)
+  linesPane.style.pointerEvents = 'none';
 
-  const VectorMap = L.GridLayer.extend({
+  const LinesLayer = L.GridLayer.extend({
     createTile: function (coords, done) {
       const size = this.getTileSize();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -349,6 +350,8 @@
       if (!D) return;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
 
       const z = coords.z;
       const tilesPerWorld = Math.pow(2, z);
@@ -358,8 +361,8 @@
       const originY = coords.y * size.y;
       const offX = worldIndex * worldPx - originX;
 
-      // Web Mercator by hand — projecting ~100k points per tile through
-      // L.latLng would allocate far too much.
+      // Web Mercator by hand — projecting the line vertices through L.latLng
+      // would allocate far too much per tile.
       const RAD = Math.PI / 180;
       const projX = (lon) => (lon + 180) / 360 * worldPx + offX;
       const projY = (lat) => {
@@ -376,24 +379,7 @@
       const south = unprojectLat(originY + size.y, worldPx) - pad;
       const hit = (b) => !(b[2] < west || b[0] > east || b[3] < south || b[1] > north);
 
-      const fill = (rings, color) => {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        for (let i = 0; i < rings.length; i++) {
-          if (!hit(rings[i].b)) continue;
-          const c = rings[i].c;
-          for (let k = 0; k < c.length; k += 2) {
-            const x = projX(c[k]), y = projY(c[k + 1]);
-            if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-          }
-          ctx.closePath();
-        }
-        ctx.fill('evenodd');
-      };
-
-      const stroke = (lines, color, w) => {
-        ctx.strokeStyle = color; ctx.lineWidth = w;
-        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      const trace = (lines) => {
         ctx.beginPath();
         for (let i = 0; i < lines.length; i++) {
           if (!hit(lines[i].b)) continue;
@@ -403,13 +389,17 @@
             if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
           }
         }
-        ctx.stroke();
       };
 
-      fill(D.land, MAP_COLORS.land);
-      fill(D.lakes, MAP_COLORS.lake);
-      if (z >= 4) stroke(D.states, MAP_COLORS.state, z >= 6 ? 0.8 : 0.7);
-      stroke(D.countries, MAP_COLORS.country, z >= 5 ? 1.1 : 1.0);
+      // Dark casing (wider) under a bright stroke, so the line reads on any imagery.
+      const cased = (lines, color, w, casing) => {
+        trace(lines);
+        ctx.strokeStyle = 'rgba(0,0,0,' + casing + ')'; ctx.lineWidth = w + 1.5; ctx.stroke();
+        ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
+      };
+
+      if (z >= 4) cased(D.states, 'rgba(255,255,255,0.72)', z >= 6 ? 0.8 : 0.7, 0.5);
+      cased(D.countries, 'rgba(255,241,186,0.98)', z >= 5 ? 1.2 : 1.1, 0.6);
     }
   });
 
@@ -418,16 +408,12 @@
     return Math.atan(Math.sinh(n)) * 180 / Math.PI;
   }
 
-  const vectorLayer = new VectorMap({ maxZoom: 11, updateWhenIdle: false, keepBuffer: 3 });
+  const linesLayer = new LinesLayer({ pane: 'lines', maxZoom: 11, updateWhenIdle: false, keepBuffer: 3 });
 
   fetch('mapdata.json')
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(data => { window.MAPDATA = data; vectorLayer.addTo(map); })
-    .catch(() => {
-      // Last resort so the game is still playable if the vector data fails.
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
-        { subdomains: 'abcd', maxZoom: 11 }).addTo(map);
-    });
+    .then(data => { window.MAPDATA = data; linesLayer.addTo(map); })
+    .catch(() => { /* lines are an enhancement — satellite alone is still playable */ });
 
   const pinIcon = (cls) => L.divIcon({
     className: '',
@@ -436,7 +422,7 @@
     iconAnchor: [8, 8]
   });
 
-  let guessMarker = null, fixMarker = null, fixLabel = null, line = null;
+  let guessMarker = null, fixMarker = null, fixLabel = null, line = null, lineCasing = null, travelDot = null;
   let guess = null, current = null, phase = 'guessing';
 
   map.on('click', (e) => {
@@ -466,8 +452,8 @@
   );
 
   function clearMarks() {
-    [guessMarker, fixMarker, fixLabel, line].forEach(m => { if (m) map.removeLayer(m); });
-    guessMarker = fixMarker = fixLabel = line = null;
+    [guessMarker, fixMarker, fixLabel, line, lineCasing, travelDot].forEach(m => { if (m) map.removeLayer(m); });
+    guessMarker = fixMarker = fixLabel = line = lineCasing = travelDot = null;
     if (map.hasLayer(labelsLayer)) map.removeLayer(labelsLayer);
   }
 
@@ -547,12 +533,20 @@
       animate: true
     });
 
-    line = L.polyline([path[0]], {
-      color: '#7e9ca9', weight: 1.5, opacity: .85, dashArray: '5 5'
+    // A dark casing under a bright dashed line, so the wrong→right path reads on
+    // the satellite imagery. Both grow together from your guess to the answer.
+    lineCasing = L.polyline([path[0]], { color: '#00121c', weight: 4, opacity: .55 }).addTo(map);
+    line = L.polyline([path[0]], { color: '#ffd67a', weight: 2, opacity: .95, dashArray: '6 6' }).addTo(map);
+
+    // A dot that rides the tip of the line as it travels toward the answer.
+    travelDot = L.marker(path[0], {
+      icon: L.divIcon({ className: '', html: '<div class="travel-dot"></div>', iconSize: [12, 12], iconAnchor: [6, 6] }),
+      keyboard: false, interactive: false
     }).addTo(map);
 
     const landAnswer = () => {
       if (phase !== 'revealed' || !line) return;       // round moved on
+      if (travelDot) { map.removeLayer(travelDot); travelDot = null; }
       fixMarker = L.marker(fixLatLng, { icon: pinIcon('pin-fix'), keyboard: false }).addTo(map);
       fixLabel = L.marker(fixLatLng, {
         icon: L.divIcon({ className: '', html: '<div class="fix-label">' + escapeHtml(current.a) + '</div>', iconSize: [0, 0] }),
@@ -560,10 +554,17 @@
       }).addTo(map);
     };
 
+    const drawTo = (upto) => {
+      const seg = path.slice(0, upto);
+      lineCasing.setLatLngs(seg);
+      line.setLatLngs(seg);
+      if (travelDot) travelDot.setLatLng(path[Math.min(upto - 1, path.length - 1)]);
+    };
+
     // The line runs out from your pin toward the truth, in step with the
     // distance readout counting up — so you watch the miss accumulate.
     if (prefersReducedMotion()) {
-      line.setLatLngs(path);
+      drawTo(path.length);
       landAnswer();
     } else {
       const t0 = performance.now();
@@ -571,14 +572,13 @@
         if (phase !== 'revealed' || !line) return;
         const p = Math.max(0, Math.min(1, (now - t0) / REVEAL_MS));
         const eased = 1 - Math.pow(1 - p, 3);
-        const upto = Math.max(2, Math.round(eased * (path.length - 1)) + 1);
-        line.setLatLngs(path.slice(0, upto));
+        drawTo(Math.max(2, Math.round(eased * (path.length - 1)) + 1));
         if (p < 1) requestAnimationFrame(grow);
-        else { line.setLatLngs(path); landAnswer(); }
+        else { drawTo(path.length); landAnswer(); }
       })(t0);
       // Belt and braces: if rAF never runs (backgrounded tab), still land it.
       setTimeout(() => {
-        if (phase === 'revealed' && line && !fixMarker) { line.setLatLngs(path); landAnswer(); }
+        if (phase === 'revealed' && line && !fixMarker) { drawTo(path.length); landAnswer(); }
       }, REVEAL_MS + 250);
     }
 
