@@ -393,24 +393,25 @@
         }
       };
 
-      // Dark casing (wider) under a bright stroke, so the line reads on any imagery.
-      const cased = (lines, color, w, casing) => {
+      // Bright stroke over a strong dark casing. The casing is what makes the line
+      // visible on light terrain — a pale gold line on tan desert vanishes without
+      // a dark halo around it, which is exactly why coastlines were invisible.
+      const cased = (lines, color, w, halo) => {
         if (!lines || !lines.length) return;
         trace(lines);
-        ctx.strokeStyle = 'rgba(0,0,0,' + casing + ')'; ctx.lineWidth = w + 1.5; ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.lineWidth = w + halo; ctx.stroke();
         ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
       };
 
-      const GOLD = 'rgba(255,241,186,0.98)';
-      const cw = z >= 5 ? 1.2 : 1.1;   // country/coast weight
-      // Coast and country lines are the same gold and weight — a country's
-      // outline is its land borders PLUS its coast, and they should read as one.
-      // This is why island nations like Australia (all coast, no land border) now
-      // look as bordered as anyone else.
-      cased(D.coast, GOLD, cw, 0.6);
-      if (z >= 3) cased(D.lakes, 'rgba(255,241,186,0.82)', z >= 6 ? 0.8 : 0.7, 0.5);
-      if (z >= 4) cased(D.states, 'rgba(255,255,255,0.72)', z >= 6 ? 0.8 : 0.7, 0.5);
-      cased(D.countries, GOLD, cw, 0.6);
+      const GOLD = 'rgba(255,238,170,1)';
+      // Coast and country lines share one gold and weight — a country's outline is
+      // its land borders PLUS its coast, read as one line. Bold enough to see at a
+      // glance (island nations like Australia are all coast, no land border).
+      const cw = z >= 7 ? 1.5 : z >= 5 ? 1.9 : 2.2;   // country/coast weight
+      cased(D.coast, GOLD, cw, 2.4);
+      if (z >= 3) cased(D.lakes, 'rgba(255,238,170,0.9)', z >= 6 ? 1.0 : 0.9, 1.8);
+      if (z >= 4) cased(D.states, 'rgba(255,255,255,0.8)', z >= 6 ? 0.9 : 0.8, 1.8);
+      cased(D.countries, GOLD, cw, 2.4);
     }
   });
 
@@ -421,7 +422,7 @@
 
   const linesLayer = new LinesLayer({ pane: 'lines', maxZoom: 14, updateWhenIdle: false, keepBuffer: 3 });
 
-  fetch('mapdata.json')
+  fetch('mapdata.json?v=7')
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
     .then(data => { window.MAPDATA = data; linesLayer.addTo(map); })
     .catch(() => { /* lines are an enhancement — satellite alone is still playable */ });

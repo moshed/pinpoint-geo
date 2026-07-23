@@ -26,6 +26,13 @@ Deployed by GitHub Pages straight off `main` at repo root (`moshed/pinpoint-geo`
 `CNAME` holds the custom domain — GitHub rewrites this file if the domain is
 changed in repo settings, so edit it there, not here.
 
+**Cache-busting:** asset URLs carry a `?v=N` query (`app.js`, `styles.css`,
+`questions.js`, and the `mapdata.json` fetch inside `app.js`). GitHub Pages
+serves assets with `max-age=600`, so without this a returning visitor can run
+stale JS/data for up to 10 minutes — which once made a shipped fix look
+missing. **Bump every `?v=` when you change those files** so the next load is
+guaranteed fresh (they must all match; currently `v=7`).
+
 ## Design direction
 
 A surveyor's console over satellite imagery. Dark UI chrome, monospace data
@@ -73,7 +80,12 @@ arc draws between your pin and the truth.
   is why coastlines were missing before. `lakes` are a slightly lighter gold;
   `states` white and thinner, from z4 only (`cased()` in `_draw`).
   **Canvas is drawn at `min(3, devicePixelRatio)`** — capping at 2 left lines
-  pixelly on 3× phone screens; 3 fixes it. The
+  pixelly on 3× phone screens; 3 fixes it. **Lines are bold with a strong dark
+  halo** (`cased()`: a `rgba(0,0,0,0.85)` casing wider than the stroke). The
+  halo is not decoration — a pale gold line on tan desert is invisible without
+  it, which is exactly why Australia's coast (all light-terrain coastline)
+  looked borderless until the casing was strengthened. Weight `cw` scales with
+  zoom (2.2 at world → 1.5 deep). The
   lines live in their own `lines` pane at z-index 350 (above tiles 200, below
   markers 400). Web Mercator is projected by hand and features culled by bbox, as
   before. The imagery is toned down by `.sat-tiles { filter: brightness(.82)
