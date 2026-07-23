@@ -49,9 +49,10 @@
 
   const defaults = () => ({
     unit: 'mi',
+    mode: 'clue',                // 'clue' = the trivia game | 'practice' = name given, locate it
     topics: TOPICS.map(t => t.id),
     played: [],
-    rounds: []   // { n, km, score, name }
+    rounds: []   // { n, km, score, name } — the tracked record, clue mode only
   });
 
   let state = load();
@@ -63,6 +64,7 @@
       const d = defaults();
       return {
         unit: raw.unit === 'km' ? 'km' : 'mi',
+        mode: raw.mode === 'practice' ? 'practice' : 'clue',
         topics: Array.isArray(raw.topics) && raw.topics.length ? raw.topics : d.topics,
         played: Array.isArray(raw.played) ? raw.played : [],
         rounds: Array.isArray(raw.rounds) ? raw.rounds : []
@@ -73,6 +75,17 @@
   function save() {
     try { localStorage.setItem(STORE, JSON.stringify(state)); } catch (e) { /* private mode */ }
   }
+
+  /* Practice mode is ephemeral drilling: the answer name is handed to you, so its
+     scores would be meaningless mixed into your real record. Its rounds and its
+     "already seen" set live in memory only — never persisted, never sent to the
+     server. Switching modes swaps which set the field log and gauges read from. */
+  let practiceRounds = [];
+  let practicePlayed = [];
+
+  const activeRounds = () => state.mode === 'practice' ? practiceRounds : state.rounds;
+  const activePlayed = () => state.mode === 'practice' ? practicePlayed : state.played;
+  const promptFor = (q) => state.mode === 'practice' ? q.a : q.q;
 
   /* ── player identity & remote log ─────────────────────── */
 
@@ -467,9 +480,11 @@
   function pickQuestion() {
     let p = pool();
     if (!p.length) { state.topics = TOPICS.map(t => t.id); p = pool(); }
-    let unseen = p.filter(q => !state.played.includes(q.id));
+    const played = activePlayed();
+    let unseen = p.filter(q => !played.includes(q.id));
     if (!unseen.length) {                       // seen them all — go round again
-      state.played = state.played.filter(id => !p.some(q => q.id === id));
+      const keep = played.filter(id => !p.some(q => q.id === id));
+      if (state.mode === 'practice') practicePlayed = keep; else state.played = keep;
       unseen = p;
     }
     return unseen[Math.floor(Math.random() * unseen.length)];
@@ -483,9 +498,9 @@
     clearMarks();
     current = pickQuestion();
 
-    el.qCat.textContent = current.cat;
-    el.qN.textContent = 'Round ' + (state.rounds.length + 1);
-    el.qText.textContent = current.q;
+    el.qCat.textContent = state.mode === 'practice' ? 'locate' : current.cat;
+    el.qN.textContent = 'Round ' + (activeRounds().length + 1);
+    el.qText.textContent = promptFor(current);
     el.prompt.classList.remove('swap');
     void el.prompt.offsetWidth;
     el.prompt.classList.add('swap');
@@ -577,10 +592,14 @@
     countTo(el.rScore, pts, null);
     el.next.focus({ preventScroll: true });
 
-    state.played.push(current.id);
-    state.rounds.push({ n: state.rounds.length + 1, km: km, score: pts, name: current.a });
-    save();
-    logRound(current, guess, km, pts);
+    activePlayed().push(current.id);
+    activeRounds().push({ n: activeRounds().length + 1, km: km, score: pts, name: current.a });
+    if (state.mode === 'practice') {
+      // Ephemeral: session feedback only, nothing persisted or sent upstream.
+    } else {
+      save();
+      logRound(current, guess, km, pts);
+    }
     renderLog();
     renderGauges();
   }
@@ -623,7 +642,7 @@
   }
 
   function renderLog() {
-    const rounds = state.rounds.slice().reverse().slice(0, 200);
+    const rounds = activeRounds().slice().reverse().slice(0, 200);
     el.logEmpty.hidden = rounds.length > 0;
     el.logList.innerHTML = rounds.map(r =>
       '<li>' +
@@ -636,7 +655,7 @@
   }
 
   function renderGauges() {
-    const rs = state.rounds;
+    const rs = activeRounds();
     el.round.textContent = String(rs.length + 1).padStart(3, '0');
     if (!rs.length) {
       el.mean.textContent = el.miss.textContent = el.best.textContent = '—';
@@ -788,6 +807,23 @@
   el.confirm.addEventListener('click', commit);
   el.next.addEventListener('click', newRound);
 
+  function reflectMode() {
+    $('mode-clue').setAttribute('aria-pressed', String(state.mode === 'clue'));
+    $('mode-practice').setAttribute('aria-pressed', String(state.mode === 'practice'));
+  }
+
+  function setMode(mode) {
+    if (mode === state.mode) return;
+    state.mode = mode;
+    save();                 // remember the choice; practice rounds themselves stay ephemeral
+    reflectMode();
+    renderLog();
+    newRound();             // fresh item in the new mode (avoids leaking the current clue's answer)
+  }
+
+  $('mode-clue').addEventListener('click', () => setMode('clue'));
+  $('mode-practice').addEventListener('click', () => setMode('practice'));
+
   el.unit.addEventListener('click', () => {
     state.unit = state.unit === 'km' ? 'mi' : 'km';
     el.unit.textContent = state.unit;
@@ -865,9 +901,15 @@
   });
 
   el.resetLog.addEventListener('click', () => {
-    state.rounds = [];
-    state.played = [];
-    save(); renderLog(); renderGauges();
+    if (state.mode === 'practice') {
+      practiceRounds = [];
+      practicePlayed = [];
+    } else {
+      state.rounds = [];
+      state.played = [];
+      save();
+    }
+    renderLog(); renderGauges();
   });
 
   document.addEventListener('keydown', (e) => {
@@ -886,6 +928,7 @@
   /* ── go ───────────────────────────────────────────────── */
 
   el.unit.textContent = state.unit;
+  reflectMode();
   renderLog();
   renderGauges();
   newRound();

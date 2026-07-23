@@ -126,6 +126,22 @@ arc draws between your pin and the truth.
   under aggressive zooming. The lag was the *approach* (raster + overlay, two
   layers, raster fetches mid-gesture), not the geometry. Measure before blaming the
   data; don't reach for the coarser 110m dataset reflexively.
+- **Two game modes: Clues and Practice** (header toggle, `state.mode`). Clues is
+  the trivia game — a clue, you locate the answer. Practice hands you the answer
+  name (`q.a`) straight up to locate; the category chip reads "locate". Everything
+  downstream (map, scoring, reveal, field log) is identical — only the prompt text
+  differs (`promptFor`).
+
+  **Practice is deliberately ephemeral.** Because the answer is given, its scores
+  are meaningless mixed into the tracked record, so practice rounds live in
+  in-memory `practiceRounds` / `practicePlayed` — never persisted, never sent to
+  Supabase. `activeRounds()` / `activePlayed()` return the practice set or the
+  persisted clue set depending on mode, and the field log + header gauges read
+  through them, so each mode shows its own rounds and switching swaps the view.
+  The Progress panel is clue-only by construction (only clue rounds are ever
+  logged). The mode *choice* is persisted (so it's remembered); the practice
+  *rounds* are not. Don't "helpfully" start logging practice — it would pollute
+  the real record, which is the whole reason it's separate.
 - **Rhumb bearing, not great-circle.** `bearing()` in `app.js` uses the rhumb
   line so "WSW of it" matches the Mercator map the player is looking at. A
   great-circle heading says things like "NW" for a guess that is visibly
