@@ -231,7 +231,7 @@
   const map = L.map('map', {
     worldCopyJump: true,
     minZoom: 2,
-    maxZoom: 11,
+    maxZoom: 14,          // deep enough to explore the answer location on satellite
     zoomControl: true,
     attributionControl: true,
     maxBounds: [[-88, -230], [88, 230]],
@@ -312,7 +312,7 @@
      without hiding the terrain. */
   L.tileLayer(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom: 11, className: 'sat-tiles', attribution: 'Imagery &copy; <a href="https://www.esri.com/">Esri</a>' }
+    { maxZoom: 18, className: 'sat-tiles', attribution: 'Imagery &copy; <a href="https://www.esri.com/">Esri</a>' }
   ).addTo(map);
 
   /* Country + state lines, drawn into canvas tiles in their own pane above the
@@ -331,7 +331,9 @@
   const LinesLayer = L.GridLayer.extend({
     createTile: function (coords, done) {
       const size = this.getTileSize();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      // Full device pixel ratio (up to 3) — capping at 2 left lines soft and
+      // pixelly on 3× phone screens.
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
       const tile = document.createElement('canvas');
       tile.width = size.x * dpr;
       tile.height = size.y * dpr;
@@ -393,13 +395,19 @@
 
       // Dark casing (wider) under a bright stroke, so the line reads on any imagery.
       const cased = (lines, color, w, casing) => {
+        if (!lines || !lines.length) return;
         trace(lines);
         ctx.strokeStyle = 'rgba(0,0,0,' + casing + ')'; ctx.lineWidth = w + 1.5; ctx.stroke();
         ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
       };
 
+      const GOLD = 'rgba(255,241,186,';
+      // Coast and lake shores where land meets water — the water/land "border".
+      // Same gold family as country lines so every landmass is fully outlined.
+      cased(D.coast, GOLD + '0.9)', z >= 5 ? 1.0 : 0.9, 0.55);
+      if (z >= 3) cased(D.lakes, GOLD + '0.8)', z >= 6 ? 0.8 : 0.7, 0.5);
       if (z >= 4) cased(D.states, 'rgba(255,255,255,0.72)', z >= 6 ? 0.8 : 0.7, 0.5);
-      cased(D.countries, 'rgba(255,241,186,0.98)', z >= 5 ? 1.2 : 1.1, 0.6);
+      cased(D.countries, GOLD + '0.98)', z >= 5 ? 1.2 : 1.1, 0.6);
     }
   });
 
@@ -408,7 +416,7 @@
     return Math.atan(Math.sinh(n)) * 180 / Math.PI;
   }
 
-  const linesLayer = new LinesLayer({ pane: 'lines', maxZoom: 11, updateWhenIdle: false, keepBuffer: 3 });
+  const linesLayer = new LinesLayer({ pane: 'lines', maxZoom: 14, updateWhenIdle: false, keepBuffer: 3 });
 
   fetch('mapdata.json')
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
@@ -448,7 +456,7 @@
   // clutter the vector map exists to avoid.
   const labelsLayer = L.tileLayer(
     'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
-    { subdomains: 'abcd', maxZoom: 11, pane: 'markerPane', opacity: 0.85 }
+    { subdomains: 'abcd', maxZoom: 14, pane: 'markerPane', opacity: 0.85 }
   );
 
   function clearMarks() {

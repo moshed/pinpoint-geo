@@ -16,7 +16,7 @@ Four static files. No build step, no dependencies to install, no backend.
 | `styles.css` | All styling. Design tokens at the top under `:root`. |
 | `app.js` | Game logic in one IIFE — geo maths, round flow, rendering, persistence. |
 | `questions.js` | The 350-question bank as a plain `const QUESTIONS = [...]`. |
-| `mapdata.json` | Country + state/province boundary lines (Natural Earth 50m), minified (~206 KB gzipped). Drawn over the satellite basemap. Fetched once at runtime. |
+| `mapdata.json` | Coastline, lake shores, country + state/province lines (Natural Earth 50m), minified (~645 KB gzipped). Drawn over the satellite basemap. Fetched once at runtime. |
 
 Results are also logged to Supabase so history survives a cleared browser — see
 **[CLAUDE-supabase.md](CLAUDE-supabase.md)** for the schema, the no-login access
@@ -45,9 +45,9 @@ arc draws between your pin and the truth.
 - **The basemap is satellite imagery; the lines are drawn on top.** This is the
   core map decision, and it arrived in two steps. The basemap is **Esri World
   Imagery** raster tiles (free, no key) — real satellite photography, like
-  GeoHistory. Country and state lines are drawn over it by `LinesLayer` in
-  `app.js`, an `L.GridLayer` subclass rendering `mapdata.json` (`countries` +
-  `states`, lines only) into canvas tiles.
+  GeoHistory. Coast, lake shore, country and state lines are drawn over it by
+  `LinesLayer` in `app.js`, an `L.GridLayer` subclass rendering `mapdata.json`
+  (`coast`, `lakes`, `countries`, `states` — all lines) into canvas tiles.
 
   Why imagery + our own lines rather than a styled raster: satellite is
   *photographic*, so it carries no road/river/county **lines** to clutter the map
@@ -64,8 +64,14 @@ arc draws between your pin and the truth.
   *tile* layers are fine; only the overlay pane was the problem.
 
   Line styling: each line is a dark **casing** (wider) under a bright stroke, so
-  it reads on both dark ocean and bright desert. Countries are warm gold and
-  heavier; states white and lighter, from z4 only (`cased()` in `_draw`). The
+  it reads on both dark ocean and bright desert. `mapdata.json` carries four
+  line sets: `coast` (land/water shoreline) and `lakes` (lake shores) are gold
+  like the country lines, so every landmass is fully outlined where it meets
+  water — Natural Earth's `admin_0_boundary_lines_land` deliberately omits
+  coasts, which is why coastlines were missing before. `countries` are gold and
+  heavier; `states` white and lighter, from z4 only (`cased()` in `_draw`).
+  **Canvas is drawn at `min(3, devicePixelRatio)`** — capping at 2 left lines
+  pixelly on 3× phone screens; 3 fixes it. The
   lines live in their own `lines` pane at z-index 350 (above tiles 200, below
   markers 400). Web Mercator is projected by hand and features culled by bbox, as
   before. The imagery is toned down by `.sat-tiles { filter: brightness(.82)
@@ -115,6 +121,10 @@ arc draws between your pin and the truth.
   which is how macOS pinch-to-zoom arrives). A 300 px two-finger swipe travels
   ~2 zoom levels. `zoomSnap: 0` is required or each step rounds to a whole level.
   `wheelPxPerZoomLevel` does nothing now — don't "restore" it.
+- **`maxZoom` is 14** so you can zoom right into the answer on the satellite (it
+  was 11). The satellite tile layer allows z18; the line layer matches the map at
+  14, so borders stay drawn when you zoom in (coarse at deep zoom — the data is
+  50m — but present). The labels layer also goes to 14.
 - **The reveal animates a path from your wrong guess to the right answer.** On
   commit, `fitBounds` frames the shot, then a dashed great-circle line grows out
   from your pin toward the truth over `REVEAL_MS`, easing out, with a **travel dot**
