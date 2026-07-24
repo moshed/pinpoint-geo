@@ -146,7 +146,10 @@ arc draws between your pin and the truth.
   a bright gold stroke over a dark casing (`lineCasing` + `line`) so it reads on
   satellite. The answer marker and label are added only when the line *lands* — and
   the travel dot is removed then — because showing them up front gives away the
-  destination. `prefers-reduced-motion` draws it complete immediately; a timeout
+  destination. The reveal **no longer reframes the map** — it keeps the player's current
+  zoom and center (a fit-to-both zoom-in was disorienting); the line just runs out
+  from the pin at whatever zoom they guessed at, and they pan/zoom freely after.
+  `prefers-reduced-motion` draws it complete immediately; a timeout
   backstops the backgrounded-tab case where rAF never runs.
 - **The map is not a performance problem.** Drawing the lines was the first suspect
   for slow zoom; benchmarked, it costs nothing measurable — p50 8.3 ms per frame

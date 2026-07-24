@@ -536,14 +536,9 @@
     const path = arc(guess, truth, 96);
     const fixLatLng = [truth.lat, path[path.length - 1][1]];
 
-    // Frame the whole shot first, then run the line out to the answer inside it.
-    const pad = window.innerWidth < 700 ? [30, 120] : [40, 150];
-    map.fitBounds(L.latLngBounds(path), {
-      paddingTopLeft: [pad[0], pad[1]],
-      paddingBottomRight: [pad[0], window.innerWidth < 700 ? 260 : 250],
-      maxZoom: 8,
-      animate: true
-    });
+    // Keep the player's current view — no reframing. The line simply runs out from
+    // their pin toward the answer at whatever zoom they were guessing at; the
+    // fit-to-both reframe was disorienting. They can pan/zoom freely afterward.
 
     // A dark casing under a bright dashed line, so the wrong→right path reads on
     // the satellite imagery. Both grow together from your guess to the answer.
