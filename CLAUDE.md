@@ -79,7 +79,13 @@ arc draws between your pin and the truth.
   Weight `cw` is thin and scales gently with zoom (0.7 at world → 1.1 deep) —
   world-zoom thickness was the specific complaint. Coast and country share one
   weight (a country's outline is its land borders plus its coast); lakes and
-  states are thinner. Natural Earth's `admin_0_boundary_lines_land` omits
+  states are thinner. The line data is Natural Earth **50m** — accurate world→metro but visibly
+  wrong at city zoom (a state line drifts off the river it follows). Rather
+  than show wrong lines, `_draw` **fades them out past z8 and drops them by
+  z10** (`la` factor): at city zoom the satellite is the accurate ground
+  truth and no line beats a wrong one. 10m data would fix it but is ~3–5 MB
+  gzipped — too heavy for an upfront fetch; don't add it without progressive
+  loading. Natural Earth's `admin_0_boundary_lines_land` omits
   coasts, which is why `coast`/`lakes` are separate datasets — without them,
   island nations like Australia (all coast) had no outline at all. The
   lines live in their own `lines` pane at z-index 350 (above tiles 200, below

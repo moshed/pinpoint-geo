@@ -393,25 +393,34 @@
         }
       };
 
+      // The boundary data is Natural Earth 50m — accurate at world→metro zoom but
+      // visibly wrong at city zoom (a state line drifts off the river it follows,
+      // coasts miss inlets). So fade the lines out past z8 and drop them by z10:
+      // at deep zoom the satellite itself is the accurate ground truth, and showing
+      // no line beats showing a wrong one. (10m data would fix it but is ~5 MB.)
+      const la = z <= 8 ? 1 : z >= 10 ? 0 : (10 - z) / 2;
+      if (la <= 0) return;
+
       // White line with a black outline — legible on any background: the white
       // shows against dark ocean/forest, the black edge shows against bright
       // desert/snow. `haloW` is the black outline that sits under the white stroke.
-      const haloed = (lines, color, w, haloW) => {
+      const WHITE = 'rgba(255,255,255,' + (0.95 * la).toFixed(3) + ')';
+      const BLACK = 'rgba(0,0,0,' + (0.7 * la).toFixed(3) + ')';
+      const haloed = (lines, w, haloW) => {
         if (!lines || !lines.length) return;
         trace(lines);
-        ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = w + haloW; ctx.stroke();
-        ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
+        ctx.strokeStyle = BLACK; ctx.lineWidth = w + haloW; ctx.stroke();
+        ctx.strokeStyle = WHITE; ctx.lineWidth = w; ctx.stroke();
       };
 
-      const WHITE = 'rgba(255,255,255,0.95)';
       // Thin — especially at world zoom, where thick lines swamped the map — with a
       // slight step up as you zoom in. Coast and country share one weight (a
       // country's outline is its land borders plus its coast); states are thinner.
       const cw = z <= 4 ? 0.7 : z <= 6 ? 0.9 : 1.1;
-      haloed(D.coast, WHITE, cw, 1.4);
-      if (z >= 3) haloed(D.lakes, WHITE, z <= 6 ? 0.6 : 0.8, 1.2);
-      if (z >= 4) haloed(D.states, WHITE, z <= 6 ? 0.5 : 0.7, 1.1);
-      haloed(D.countries, WHITE, cw, 1.4);
+      haloed(D.coast, cw, 1.4);
+      if (z >= 3) haloed(D.lakes, z <= 6 ? 0.6 : 0.8, 1.2);
+      if (z >= 4) haloed(D.states, z <= 6 ? 0.5 : 0.7, 1.1);
+      haloed(D.countries, cw, 1.4);
     }
   });
 
