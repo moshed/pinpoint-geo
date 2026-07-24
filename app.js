@@ -393,25 +393,25 @@
         }
       };
 
-      // Black line over a light halo. A dark line needs a LIGHT halo to stay
-      // visible on dark ocean and forest — the inverse of a bright line on light
-      // terrain. The halo is what keeps a thin black line legible everywhere.
+      // White line with a black outline — legible on any background: the white
+      // shows against dark ocean/forest, the black edge shows against bright
+      // desert/snow. `haloW` is the black outline that sits under the white stroke.
       const haloed = (lines, color, w, haloW) => {
         if (!lines || !lines.length) return;
         trace(lines);
-        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = w + haloW; ctx.stroke();
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = w + haloW; ctx.stroke();
         ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
       };
 
-      const BLACK = 'rgba(0,0,0,0.92)';
+      const WHITE = 'rgba(255,255,255,0.95)';
       // Thin — especially at world zoom, where thick lines swamped the map — with a
       // slight step up as you zoom in. Coast and country share one weight (a
       // country's outline is its land borders plus its coast); states are thinner.
       const cw = z <= 4 ? 0.7 : z <= 6 ? 0.9 : 1.1;
-      haloed(D.coast, BLACK, cw, 1.3);
-      if (z >= 3) haloed(D.lakes, BLACK, z <= 6 ? 0.6 : 0.8, 1.1);
-      if (z >= 4) haloed(D.states, BLACK, z <= 6 ? 0.5 : 0.7, 1.0);
-      haloed(D.countries, BLACK, cw, 1.3);
+      haloed(D.coast, WHITE, cw, 1.4);
+      if (z >= 3) haloed(D.lakes, WHITE, z <= 6 ? 0.6 : 0.8, 1.2);
+      if (z >= 4) haloed(D.states, WHITE, z <= 6 ? 0.5 : 0.7, 1.1);
+      haloed(D.countries, WHITE, cw, 1.4);
     }
   });
 

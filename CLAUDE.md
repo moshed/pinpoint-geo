@@ -70,9 +70,11 @@ arc draws between your pin and the truth.
   canvas layer" also solved it, but satellite forced two layers again, and two
   *tile* layers are fine; only the overlay pane was the problem.
 
-  Line styling: **thin black lines over a light (white) halo** — a dark line
-  needs a *light* halo to stay visible on dark ocean/forest, the inverse of a
-  bright line on light terrain (`haloed()` in `_draw`). Colour and thinness
+  Line styling: **thin white lines with a black outline** (`haloed()` in `_draw`:
+  a black casing under a white stroke). White-with-black-outline is the most
+  universally legible — the white shows on dark ocean/forest, the black edge
+  shows on bright desert/snow. The colour went gold → black → white across a
+  few rounds of feedback; white-cased is the keeper. Colour and thinness
   were both explicit asks (bright gold, and thicker, read as too heavy).
   Weight `cw` is thin and scales gently with zoom (0.7 at world → 1.1 deep) —
   world-zoom thickness was the specific complaint. Coast and country share one
