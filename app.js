@@ -393,25 +393,25 @@
         }
       };
 
-      // Bright stroke over a strong dark casing. The casing is what makes the line
-      // visible on light terrain — a pale gold line on tan desert vanishes without
-      // a dark halo around it, which is exactly why coastlines were invisible.
-      const cased = (lines, color, w, halo) => {
+      // Black line over a light halo. A dark line needs a LIGHT halo to stay
+      // visible on dark ocean and forest — the inverse of a bright line on light
+      // terrain. The halo is what keeps a thin black line legible everywhere.
+      const haloed = (lines, color, w, haloW) => {
         if (!lines || !lines.length) return;
         trace(lines);
-        ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.lineWidth = w + halo; ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = w + haloW; ctx.stroke();
         ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
       };
 
-      const GOLD = 'rgba(255,238,170,1)';
-      // Coast and country lines share one gold and weight — a country's outline is
-      // its land borders PLUS its coast, read as one line. Bold enough to see at a
-      // glance (island nations like Australia are all coast, no land border).
-      const cw = z >= 7 ? 1.5 : z >= 5 ? 1.9 : 2.2;   // country/coast weight
-      cased(D.coast, GOLD, cw, 2.4);
-      if (z >= 3) cased(D.lakes, 'rgba(255,238,170,0.9)', z >= 6 ? 1.0 : 0.9, 1.8);
-      if (z >= 4) cased(D.states, 'rgba(255,255,255,0.8)', z >= 6 ? 0.9 : 0.8, 1.8);
-      cased(D.countries, GOLD, cw, 2.4);
+      const BLACK = 'rgba(0,0,0,0.92)';
+      // Thin — especially at world zoom, where thick lines swamped the map — with a
+      // slight step up as you zoom in. Coast and country share one weight (a
+      // country's outline is its land borders plus its coast); states are thinner.
+      const cw = z <= 4 ? 0.7 : z <= 6 ? 0.9 : 1.1;
+      haloed(D.coast, BLACK, cw, 1.3);
+      if (z >= 3) haloed(D.lakes, BLACK, z <= 6 ? 0.6 : 0.8, 1.1);
+      if (z >= 4) haloed(D.states, BLACK, z <= 6 ? 0.5 : 0.7, 1.0);
+      haloed(D.countries, BLACK, cw, 1.3);
     }
   });
 

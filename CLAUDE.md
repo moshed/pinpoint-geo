@@ -70,22 +70,16 @@ arc draws between your pin and the truth.
   canvas layer" also solved it, but satellite forced two layers again, and two
   *tile* layers are fine; only the overlay pane was the problem.
 
-  Line styling: each line is a dark **casing** (wider) under a bright stroke, so
-  it reads on both dark ocean and bright desert. `mapdata.json` carries four
-  line sets: `coast` (shoreline) is drawn in the **same gold and weight** as
-  `countries`, because a country's outline is its land borders *plus* its
-  coast and they should read as one line — this is why island nations like
-  Australia (all coast, no land border) are outlined as boldly as anyone else.
-  Natural Earth's `admin_0_boundary_lines_land` omits coasts by design, which
-  is why coastlines were missing before. `lakes` are a slightly lighter gold;
-  `states` white and thinner, from z4 only (`cased()` in `_draw`).
-  **Canvas is drawn at `min(3, devicePixelRatio)`** — capping at 2 left lines
-  pixelly on 3× phone screens; 3 fixes it. **Lines are bold with a strong dark
-  halo** (`cased()`: a `rgba(0,0,0,0.85)` casing wider than the stroke). The
-  halo is not decoration — a pale gold line on tan desert is invisible without
-  it, which is exactly why Australia's coast (all light-terrain coastline)
-  looked borderless until the casing was strengthened. Weight `cw` scales with
-  zoom (2.2 at world → 1.5 deep). The
+  Line styling: **thin black lines over a light (white) halo** — a dark line
+  needs a *light* halo to stay visible on dark ocean/forest, the inverse of a
+  bright line on light terrain (`haloed()` in `_draw`). Colour and thinness
+  were both explicit asks (bright gold, and thicker, read as too heavy).
+  Weight `cw` is thin and scales gently with zoom (0.7 at world → 1.1 deep) —
+  world-zoom thickness was the specific complaint. Coast and country share one
+  weight (a country's outline is its land borders plus its coast); lakes and
+  states are thinner. Natural Earth's `admin_0_boundary_lines_land` omits
+  coasts, which is why `coast`/`lakes` are separate datasets — without them,
+  island nations like Australia (all coast) had no outline at all. The
   lines live in their own `lines` pane at z-index 350 (above tiles 200, below
   markers 400). Web Mercator is projected by hand and features culled by bbox, as
   before. The imagery is toned down by `.sat-tiles { filter: brightness(.82)

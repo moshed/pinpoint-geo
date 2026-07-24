@@ -563,9 +563,14 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border-radius: 2px;
   padding: 2px 6px;
   white-space: nowrap;
+  /* The Leaflet divIcon container is 0×0, so a block child collapses to ~0 width
+     and gets clipped to one letter. inline-block + max-content sizes it to the
+     text instead. */
+  display: inline-block;
+  width: max-content;
+  max-width: min(260px, 40vw);
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: min(260px, 34vw);
   transform: translate(14px, -8px);
 }
 
